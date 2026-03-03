@@ -257,35 +257,25 @@ export function SignUpScreen() {
 
   const [googleLoading, setGoogleLoading] = useState(false);
 
-  const handleGoogleSignUp = async () => {
+  // Google OAuth — implicit flow redirect per Supabase Google Auth guide.
+  // signInWithOAuth redirects the browser to Google. After consent, Google
+  // redirects to Supabase, which redirects to /auth/callback#access_token=...
+  // supabase-js reads the hash automatically (detectSessionInUrl: true).
+  // Works for both sign-up and login — Supabase creates the user on first
+  // OAuth sign-in automatically.
+  const handleGoogleLogin = async () => {
     setGoogleLoading(true);
-
-    const { data, error } = await supabase.auth.signInWithOAuth({
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: window.location.origin + '/auth/callback',
-        skipBrowserRedirect: false,
       },
     });
-
-    console.log('signInWithOAuth data:', data);
-    console.log('signInWithOAuth error:', error);
-
     if (error) {
-      console.error('Google OAuth error:', error);
+      console.error('[SignUpScreen] Google OAuth error:', error.message);
       setGoogleLoading(false);
-      addToast('error', 'Google sign in failed: ' + error.message);
-      return;
     }
-
-    if (data?.url) {
-      // Manually redirect to the Google auth URL
-      // in case Supabase is not auto-redirecting
-      window.location.href = data.url;
-    } else {
-      setGoogleLoading(false);
-      addToast('error', 'Could not get Google sign in URL');
-    }
+    // Browser will redirect — no further action needed
   };
 
   const validateSignUp = () => {
@@ -475,7 +465,7 @@ export function SignUpScreen() {
           </div>
 
           {/* Google OAuth */}
-          <GoogleOAuthButton isDark={isDark} onClick={handleGoogleSignUp} loading={googleLoading} />
+          <GoogleOAuthButton isDark={isDark} onClick={handleGoogleLogin} loading={googleLoading} />
 
           {/* Divider */}
           <OrDivider isDark={isDark} />

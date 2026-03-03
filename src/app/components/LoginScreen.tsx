@@ -11,7 +11,7 @@
  *   session already exists, navigate immediately to /dashboard.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Eye, EyeOff, Sun, Moon,
@@ -469,35 +469,23 @@ export function LoginScreen() {
   const [sentToEmail, setSentToEmail] = useState('');
 
   /* ── Handlers ── */
+  // Google OAuth — implicit flow redirect per Supabase Google Auth guide.
+  // signInWithOAuth redirects the browser to Google. After consent, Google
+  // redirects to Supabase, which redirects to /auth/callback#access_token=...
+  // supabase-js reads the hash automatically (detectSessionInUrl: true).
   const handleGoogleLogin = async () => {
     setGoogleLoading(true);
-
-    const { data, error } = await supabase.auth.signInWithOAuth({
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: window.location.origin + '/auth/callback',
-        skipBrowserRedirect: false,
       },
     });
-
-    console.log('signInWithOAuth data:', data);
-    console.log('signInWithOAuth error:', error);
-
     if (error) {
-      console.error('Google OAuth error:', error);
+      console.error('[LoginScreen] Google OAuth error:', error.message);
       setGoogleLoading(false);
-      alert('Google sign in failed: ' + error.message);
-      return;
     }
-
-    if (data?.url) {
-      // Manually redirect to the Google auth URL
-      // in case Supabase is not auto-redirecting
-      window.location.href = data.url;
-    } else {
-      setGoogleLoading(false);
-      alert('Could not get Google sign in URL');
-    }
+    // Browser will redirect — no further action needed
   };
 
   const validateLogin = () => {
