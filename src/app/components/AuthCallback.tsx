@@ -67,14 +67,36 @@ export function AuthCallback() {
       }
     );
 
-    // Also check immediately — the session may already exist if supabase-js
-    // processed the hash before this effect ran.
-    supabase.auth.getSession().then(({ data: { session } }) => {
+const completeAuth = async () => {
+      // If Supabase returned a PKCE code in the query string, explicitly
+      // exchange it for a session (covers providers/configs that use code flow).
+      const code = new URLSearchParams(window.location.search).get('code');
+      if (code) {
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          console.error('[AuthCallback] code exchange failed:', error.message);
+        } else if (data.session?.user && !routed.current) {
+          console.log('[AuthCallback] session established via code exchange');
+          subscription.unsubscribe();
+          routeUser(data.session.user.id);
+          return;
+        }
+      }
+
+      // Also check immediately — the session may already exist if supabase-js
+      // processed the callback URL before this effect ran.
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (session?.user && !routed.current) {
         console.log('[AuthCallback] session already present on mount');
         subscription.unsubscribe();
         routeUser(session.user.id);
       }
+  };
+
+    completeAuth().catch((err) => {
+      console.error('[AuthCallback] initial callback handling failed:', err);
     });
 
     // Safety timeout — if no session after 15 seconds, redirect to login

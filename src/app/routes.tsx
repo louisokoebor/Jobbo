@@ -10,6 +10,7 @@ import { CvEditorScreen } from './components/CvEditorScreen';
 import { ApplicationsPage } from './components/ApplicationsPage';
 import { ApplicationDetailPage } from './components/ApplicationDetailPage';
 import { ProfilePage } from './components/ProfilePage';
+import { BillingPage } from './components/BillingPage';
 import { AuthCallback } from './components/AuthCallback';
 
 export const router = createBrowserRouter([
@@ -22,6 +23,7 @@ export const router = createBrowserRouter([
   { path: '/applications',     Component: ApplicationsPage },
   { path: '/applications/:id', Component: ApplicationDetailPage },
   { path: '/profile',          Component: ProfilePage },
+  { path: '/billing',          Component: BillingPage },
   { path: '/new-application',  Component: NewApplicationScreen },
   { path: '/cv-preview',       Component: CvPreviewPage },
   { path: '/cover-letter',                            Component: CoverLetterScreen },

@@ -1,19 +1,8 @@
 /**
  * UserPlanContext — Shared subscription / plan tier state
  *
- * Fetches `plan_tier` from the Supabase `users` table for the currently
- * authenticated user and exposes it app-wide via React Context.
- *
- * Changes from original:
- *  - Removed the blanket skip for Google OAuth users. The original skip
- *    (`app_metadata.provider === 'google'`) prevented plan tier from ever
- *    being refreshed for Google users after initial load, and caused silent
- *    failures when the auth state changed (e.g. after an upgrade).
- *  - Added a guard on the /auth/callback path only — we let AuthCallback
- *    own the routing logic there and don't want UserPlanContext to trigger
- *    a competing navigation.
- *  - Debounced rapid auth-state events (SIGNED_IN + TOKEN_REFRESHED can
- *    fire back-to-back on the OAuth redirect) so we only fetch once.
+ * Uses RevenueCat as the source of truth for entitlements.
+ * Falls back to Supabase users.plan_tier if RC is unavailable.
  */
 
 import {
@@ -26,22 +15,24 @@ import {
   type ReactNode,
 } from 'react';
 import { supabase } from './supabaseClient';
+import {
+  getRCInstance,
+  teardownRC,
+  getProEntitlement,
+  getCustomerInfo,
+  type RCCustomerInfo,
+} from './revenueCatClient';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 export type PlanTier = 'free' | 'pro';
 
 interface UserPlanState {
-  /** Current plan tier – defaults to 'free' until loaded */
   planTier: PlanTier;
-  /** True while the initial fetch is in-flight */
   isLoading: boolean;
-  /** Whether the user is on the free tier */
   isFreeTier: boolean;
-  /** Whether the user is on the pro tier */
   isProTier: boolean;
-  /** Authenticated user id (null when signed out) */
   userId: string | null;
-  /** Re-fetch plan tier (e.g. after an upgrade) */
+  rcCustomerInfo: RCCustomerInfo | null;
   refresh: () => Promise<void>;
 }
 
@@ -51,6 +42,7 @@ const defaultState: UserPlanState = {
   isFreeTier: true,
   isProTier: false,
   userId: null,
+  rcCustomerInfo: null,
   refresh: async () => {},
 };
 
@@ -61,6 +53,7 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
   const [planTier, setPlanTier] = useState<PlanTier>('free');
   const [isLoading, setIsLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
+  const [rcCustomerInfo, setRcCustomerInfo] = useState<RCCustomerInfo | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchPlanTier = useCallback(async () => {
@@ -72,12 +65,31 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
       if (!user) {
         setPlanTier('free');
         setUserId(null);
+        setRcCustomerInfo(null);
         setIsLoading(false);
+        teardownRC();
         return;
       }
 
       setUserId(user.id);
 
+      // ── RevenueCat entitlement check ──
+      try {
+        getRCInstance(user.id);
+        const isPro = await getProEntitlement(user.id);
+        const info = await getCustomerInfo(user.id);
+        setRcCustomerInfo(info);
+        setPlanTier(isPro ? 'pro' : 'free');
+        setIsLoading(false);
+        return;
+      } catch (rcErr) {
+        console.warn(
+          'UserPlanContext: RevenueCat check failed, falling back to Supabase:',
+          rcErr,
+        );
+      }
+
+      // ── Fallback: Supabase users table ──
       const { data, error } = await supabase
         .from('users')
         .select('plan_tier')
@@ -85,38 +97,27 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
         .single();
 
       if (error) {
-        console.warn(
-          'UserPlanContext: Failed to fetch plan_tier — user row may not exist yet:',
-          error.message,
-        );
-        // Fallback to free. This is expected for brand-new Google OAuth users
-        // whose handle_new_user trigger hasn't completed yet.
+        console.warn('UserPlanContext: Failed to fetch plan_tier:', error.message);
         setPlanTier('free');
       } else {
-        const tier = data?.plan_tier;
-        setPlanTier(tier === 'pro' ? 'pro' : 'free');
+        setPlanTier(data?.plan_tier === 'pro' ? 'pro' : 'free');
       }
     } catch (err) {
-      console.error('UserPlanContext: Unexpected error fetching plan tier:', err);
+      console.error('UserPlanContext: Unexpected error:', err);
       setPlanTier('free');
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  // Fetch on mount
   useEffect(() => {
     fetchPlanTier();
   }, [fetchPlanTier]);
 
-  // Re-fetch when auth state changes — debounced to handle rapid-fire events
-  // (SIGNED_IN + TOKEN_REFRESHED both fire during OAuth redirect).
   useEffect(() => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      // Let AuthCallback own routing on its own page — don't trigger a
-      // competing navigation by fetching plan tier mid-redirect.
       if (
         typeof window !== 'undefined' &&
         window.location.pathname === '/auth/callback'
@@ -125,7 +126,6 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
       }
 
       if (session?.user) {
-        // Debounce: wait 300ms so back-to-back events only trigger one fetch
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => {
           fetchPlanTier();
@@ -133,7 +133,9 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
       } else if (event === 'SIGNED_OUT') {
         setPlanTier('free');
         setUserId(null);
+        setRcCustomerInfo(null);
         setIsLoading(false);
+        teardownRC();
       }
     });
 
@@ -149,6 +151,7 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
     isFreeTier: planTier === 'free',
     isProTier: planTier === 'pro',
     userId,
+    rcCustomerInfo,
     refresh: fetchPlanTier,
   };
 

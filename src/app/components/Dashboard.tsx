@@ -705,49 +705,16 @@ function DashboardInner() {
 
         sessionRef.current = session;
 
-        // Check onboarding — first-time users have no cv_profiles
-        try {
-          const { data: profiles, error: profilesError } = await supabase
-            .from('cv_profiles')
-            .select('id')
-            .eq('user_id', session.user.id)
-            .limit(1);
-
-          if (cancelled) return;
-
-          console.log('Dashboard onboarding check:', {
-            userId: session.user.id,
-            profiles,
-            profilesError: profilesError?.message,
-          });
-
-          if (profilesError) {
-            // Query failed (RLS, missing public.users row, etc.)
-            // Safe default: send to onboarding — they can always come back
-            console.warn('Dashboard: cv_profiles query failed, redirecting to onboarding:', profilesError.message);
-            navigate('/onboarding', { replace: true });
-            return;
-          }
-
-          if (!profiles || profiles.length === 0) {
-            navigate('/onboarding', { replace: true });
-            return;
-          }
-        } catch (err) {
-          console.error('Dashboard onboarding check error:', err);
-          // Safe default: redirect to onboarding on unexpected error
-          if (!cancelled) {
-            navigate('/onboarding', { replace: true });
-          }
-          return;
-        }
+        // Previously this checked cv_profiles and redirected to /onboarding
+        // if none existed. Removed: users who click "Skip for now" on the
+        // onboarding wizard should land here with an empty dashboard.
+        // The dashboard shows empty-state messaging in each Kanban column.
 
         if (!cancelled) setAuthReady(true);
       } catch (err) {
         console.error('Dashboard: Unexpected error during auth check:', err);
-        // Safe default: redirect to onboarding on unexpected error
         if (!cancelled) {
-          navigate('/onboarding', { replace: true });
+          navigate('/login', { replace: true });
         }
       }
     };
