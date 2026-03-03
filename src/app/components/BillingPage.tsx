@@ -105,8 +105,10 @@ export function BillingPage() {
   /* ── State ── */
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [plan, setPlan] = useState<PlanState>({ planTier: 'free', generationsUsed: 0, generationsLimit: 3 });
   const [rcIsPro, setRcIsPro] = useState(false);
+  const [activePlanId, setActivePlanId] = useState<PackageId | 'free'>('free');
 
   const [purchasingId, setPurchasingId] = useState<PackageId | null>(null);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
@@ -122,6 +124,7 @@ export function BillingPage() {
       if (!user) { navigate('/login', { replace: true }); return; }
       if (cancelled) return;
       setUserId(user.id);
+      setUserEmail(user.email ?? null);
 
       // DB plan state
       const { data: dbUser } = await supabase
@@ -139,24 +142,34 @@ export function BillingPage() {
       };
 
       // Live RC entitlement — source of truth
-      let isPro = false;
+      let rcIsPro = false;
       try {
-        isPro = await getProEntitlement(user.id);
+        rcIsPro = await getProEntitlement(user.id);
       } catch (err) {
         console.warn('[BillingPage] RC entitlement check failed:', err);
       }
 
       if (cancelled) return;
 
-      // Trust RC over DB
-      if (isPro && dbPlan.planTier === 'free') {
+      // User is pro if EITHER source says so
+      const isPro = dbPlan.planTier === 'pro' || rcIsPro;
+
+      // Always set plan to pro if either source confirms it
+      if (isPro) {
         dbPlan.planTier = 'pro';
-      } else if (!isPro && dbPlan.planTier === 'pro') {
-        dbPlan.planTier = 'free';
       }
 
       setRcIsPro(isPro);
       setPlan(dbPlan);
+
+      // Set activePlanId based on confirmed pro status
+      setActivePlanId(isPro ? 'pro_monthly' : 'free');
+
+      console.log('[BillingPage] DB plan_tier:', dbUser?.plan_tier);
+      console.log('[BillingPage] RC isPro:', rcIsPro);
+      console.log('[BillingPage] final isPro:', isPro);
+      console.log('[BillingPage] activePlanId:', isPro ? 'pro_monthly' : 'free');
+
       setLoading(false);
     }
 
@@ -173,32 +186,43 @@ export function BillingPage() {
     setSuccessMsg(null);
 
     try {
-      await purchasePackage(userId, packageId);
+      await purchasePackage(userId, packageId, userEmail ?? undefined);
 
-      // Sync DB immediately
-      await supabase.from('users').update({ plan_tier: 'pro' }).eq('id', userId);
+      // 1. Optimistically update DB
+      await supabase
+        .from('users')
+        .update({ plan_tier: 'pro' })
+        .eq('id', userId);
 
-      // Refresh from RC
+      // 2. Confirm with RC as source of truth
       const isPro = await getProEntitlement(userId);
-      setRcIsPro(isPro);
-      setPlan(prev => ({ ...prev, planTier: 'pro' }));
 
-      setSuccessMsg("You're now on Pro!");
+      // 3. Update all plan state atomically
+      setRcIsPro(isPro);
+      setActivePlanId(packageId);
+      setPlan(prev => ({ ...prev, planTier: isPro ? 'pro' : prev.planTier }));
+
+      // 4. Show success message for 5 seconds
+      setSuccessMsg("You're now on Pro! \u{1F389}");
       successTimerRef.current = setTimeout(() => setSuccessMsg(null), 5000);
+
     } catch (err: any) {
-      const msg = err?.message || '';
-      const cancelled =
+      const msg: string = err?.message ?? '';
+      const wasCancelled =
+        err?.userCancelled === true ||
         msg.includes('PURCHASE_CANCELLED') ||
         msg.includes('USER_CANCELLED') ||
-        msg.toLowerCase().includes('cancel');
+        msg.toLowerCase().includes('cancel') ||
+        err?.code === 'PURCHASE_CANCELLED';
 
-      if (!cancelled) {
-        setPurchaseError(msg || 'Purchase failed. Please try again.');
+      if (!wasCancelled) {
+        setPurchaseError(msg || 'Payment failed. Please try again.');
       }
+      // If cancelled: silently reset, no error shown
     } finally {
       setPurchasingId(null);
     }
-  }, [userId]);
+  }, [userId, userEmail]);
 
   /* ── Manage subscription ── */
   const handleManage = useCallback(async () => {
@@ -225,7 +249,7 @@ export function BillingPage() {
   const surfaceBg = isDark ? '#1E293B' : '#FFFFFF';
   const surfaceElevated = isDark ? '#263348' : '#F8FAFC';
 
-  const isPro = plan.planTier === 'pro';
+  const isPro = plan.planTier === 'pro' || rcIsPro;
   const usageRatio = Math.min(plan.generationsUsed / plan.generationsLimit, 1);
 
   return (
@@ -400,14 +424,14 @@ export function BillingPage() {
             name="Free"
             price={<>&pound;0</>}
             priceSub=""
-            isCurrent={!isPro}
+            isCurrent={activePlanId === 'free'}
             isHighlighted={false}
-            badge={!isPro ? 'Current Plan' : undefined}
+            badge={activePlanId === 'free' ? 'Current Plan' : undefined}
             badgeColor="blue"
             features={FEATURES}
             featureColumn="free"
             isDark={isDark}
-            ctaLabel={!isPro ? 'Current Plan' : undefined}
+            ctaLabel={activePlanId === 'free' ? 'Current Plan' : undefined}
             ctaDisabled
             purchasing={false}
           />
@@ -417,8 +441,10 @@ export function BillingPage() {
             name="Pro Monthly"
             price={<>&pound;9<span style={{ fontSize: 16, fontWeight: 400 }}>/mo</span></>}
             priceSub=""
-            isCurrent={false}
+            isCurrent={activePlanId === 'pro_monthly'}
             isHighlighted={false}
+            badge={activePlanId === 'pro_monthly' ? 'Current Plan' : undefined}
+            badgeColor="blue"
             features={FEATURES}
             featureColumn="pro"
             isDark={isDark}
@@ -434,10 +460,10 @@ export function BillingPage() {
             name="Pro Annual"
             price={<>&pound;6.60<span style={{ fontSize: 16, fontWeight: 400 }}>/mo</span></>}
             priceSub={<>&pound;79 billed annually</>}
-            isCurrent={false}
+            isCurrent={activePlanId === 'pro_annual'}
             isHighlighted={!isPro}
-            badge="Best Value"
-            badgeColor="green"
+            badge={activePlanId === 'pro_annual' ? 'Current Plan' : (!isPro ? 'Best Value' : undefined)}
+            badgeColor={activePlanId === 'pro_annual' ? 'blue' : 'green'}
             features={FEATURES}
             featureColumn="pro"
             isDark={isDark}

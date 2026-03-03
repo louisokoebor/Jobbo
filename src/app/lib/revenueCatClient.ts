@@ -3,25 +3,54 @@
  *
  * Wraps the @revenuecat/purchases-js SDK into simple async functions.
  * Every function takes a userId so the singleton auto-configures.
+ *
+ * IMPORTANT: The SDK is loaded lazily via dynamic import() to prevent
+ * the app from crashing if the package fails to evaluate in restricted
+ * environments (e.g. Figma sandbox).
  */
 
-import { Purchases } from '@revenuecat/purchases-js';
-
 /* ─── Constants ──────────────────────────────────────────────── */
-const RC_API_KEY = 'test_DkPyRtPqsSoMNcckXEeepcvpYow';
+const RC_API_KEY = 'rcb_sb_AHJGFykqOSlnavormHshUuumv';
 export const ENTITLEMENT_ID = 'pro';
 
+/* ─── Lazy SDK loader ────────────────────────────────────────── */
+let _PurchasesClass: any = null;
+let _sdkLoadPromise: Promise<any> | null = null;
+
+async function loadPurchasesSDK(): Promise<any> {
+  if (_PurchasesClass) return _PurchasesClass;
+  if (_sdkLoadPromise) return _sdkLoadPromise;
+
+  _sdkLoadPromise = import('@revenuecat/purchases-js')
+    .then((mod) => {
+      _PurchasesClass = mod.Purchases;
+      console.log('[RevenueCat] SDK loaded successfully');
+      return _PurchasesClass;
+    })
+    .catch((err) => {
+      console.warn('[RevenueCat] SDK failed to load:', err);
+      _sdkLoadPromise = null; // allow retry
+      throw err;
+    });
+
+  return _sdkLoadPromise;
+}
+
 /* ─── Singleton ──────────────────────────────────────────────── */
-let instance: Purchases | null = null;
+let instance: any = null;
 let configuredUserId: string | null = null;
 
 /**
  * Get (or create) a configured Purchases instance for the given user.
  * Reconfigures only when userId changes.
  */
-export function getRCInstance(userId: string): Purchases {
+async function getRCInstance(userId: string): Promise<any> {
+  if (!RC_API_KEY) {
+    throw new Error('[RevenueCat] API key is not set');
+  }
   if (instance && configuredUserId === userId) return instance;
 
+  const Purchases = await loadPurchasesSDK();
   console.log('[RevenueCat] Configuring for user:', userId);
   instance = Purchases.configure(RC_API_KEY, userId);
   configuredUserId = userId;
@@ -42,7 +71,7 @@ export function teardownRC(): void {
  */
 export async function getProEntitlement(userId: string): Promise<boolean> {
   try {
-    const rc = getRCInstance(userId);
+    const rc = await getRCInstance(userId);
     const info = await rc.getCustomerInfo();
     return !!info.entitlements.active[ENTITLEMENT_ID];
   } catch (err) {
@@ -64,7 +93,7 @@ export interface RCCustomerInfo {
 }
 
 export async function getCustomerInfo(userId: string): Promise<RCCustomerInfo> {
-  const rc = getRCInstance(userId);
+  const rc = await getRCInstance(userId);
   const info = await rc.getCustomerInfo();
   const pro = info.entitlements.active[ENTITLEMENT_ID] || null;
 
@@ -82,9 +111,9 @@ export async function getCustomerInfo(userId: string): Promise<RCCustomerInfo> {
 /* ─── Offerings ──────────────────────────────────────────────── */
 
 export async function getOfferings(userId: string) {
-  const rc = getRCInstance(userId);
-  const offerings = await rc.getOfferings();
-  return offerings.current;
+  const rc = await getRCInstance(userId);
+  const result = await rc.getOfferings();
+  return result.all['jobbo-offerings'] ?? result.current;
 }
 
 /* ─── Purchase ───────────────────────────────────────────────── */
@@ -94,47 +123,60 @@ export type PackageId = 'pro_monthly' | 'pro_annual';
 export async function purchasePackage(
   userId: string,
   packageId: PackageId,
+  customerEmail?: string,
 ) {
-  const rc = getRCInstance(userId);
-  const offerings = await rc.getOfferings();
+  const rc = await getRCInstance(userId);
+  const offeringsResult = await rc.getOfferings();
 
-  if (!offerings.current) {
-    throw new Error('No current offering configured in RevenueCat');
+  // Use the specific jobbo-offerings, fall back to current
+  const offering =
+    offeringsResult.all['jobbo-offerings'] ??
+    offeringsResult.current;
+
+  if (!offering) {
+    throw new Error('No offering found in RevenueCat');
   }
 
-  const pkg = offerings.current.availablePackages.find(
-    (p: any) => p.identifier === packageId,
+  console.log('[RC] offering:', offering.identifier);
+  console.log('[RC] packages:',
+    offering.availablePackages.map((p: any) => ({
+      packageId: p.identifier,
+      productId: p.rcBillingProduct?.identifier,
+      price: p.rcBillingProduct?.currentPrice?.formattedPrice,
+    }))
+  );
+
+  // Map our internal IDs to RC package identifiers
+  const packageIdentifierMap: Record<PackageId, string[]> = {
+    pro_monthly: ['$rc_monthly', 'pro_monthly', 'jobbo_pro_monthly'],
+    pro_annual:  ['$rc_annual',  'pro_annual',  'jobbo_pro_annual'],
+  };
+
+  const candidateIds = packageIdentifierMap[packageId];
+
+  const pkg = offering.availablePackages.find((p: any) =>
+    candidateIds.includes(p.identifier)
   );
 
   if (!pkg) {
-    // Fallback: try matching by $rc_ convention
-    const rcId =
-      packageId === 'pro_monthly' ? '$rc_monthly' :
-      packageId === 'pro_annual' ? '$rc_annual' : packageId;
-
-    const fallbackPkg = offerings.current.availablePackages.find(
-      (p: any) => p.identifier === rcId,
+    throw new Error(
+      `Package not found for "${packageId}". ` +
+      `Available: ${offering.availablePackages.map((p: any) => p.identifier).join(', ')}`
     );
-
-    if (!fallbackPkg) {
-      throw new Error(
-        `Package "${packageId}" not found. Available: ${offerings.current.availablePackages.map((p: any) => p.identifier).join(', ')}`,
-      );
-    }
-
-    // RevenueCat renders its own Stripe payment sheet — no custom form needed
-    const result = await rc.purchase({ rcPackage: fallbackPkg });
-    return result;
   }
 
-  const result = await rc.purchase({ rcPackage: pkg });
+  console.log('[RC] purchasing package:', pkg.identifier);
+  const result = await rc.purchase({
+    rcPackage: pkg,
+    ...(customerEmail ? { customerEmail } : {}),
+  });
   return result;
 }
 
 /* ─── Management URL ─────────────────────────────────────────── */
 
 export async function getManagementURL(userId: string): Promise<string | null> {
-  const rc = getRCInstance(userId);
+  const rc = await getRCInstance(userId);
   const info = await rc.getCustomerInfo();
   return info.managementURL;
 }

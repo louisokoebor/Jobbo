@@ -16,7 +16,6 @@ import {
 } from 'react';
 import { supabase } from './supabaseClient';
 import {
-  getRCInstance,
   teardownRC,
   getProEntitlement,
   getCustomerInfo,
@@ -75,7 +74,6 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
 
       // ── RevenueCat entitlement check ──
       try {
-        getRCInstance(user.id);
         const isPro = await getProEntitlement(user.id);
         const info = await getCustomerInfo(user.id);
         setRcCustomerInfo(info);
