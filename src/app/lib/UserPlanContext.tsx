@@ -4,7 +4,16 @@
  * Fetches `plan_tier` from the Supabase `users` table for the currently
  * authenticated user and exposes it app-wide via React Context.
  *
- * plan_tier_enum: 'free' | 'pro'
+ * Changes from original:
+ *  - Removed the blanket skip for Google OAuth users. The original skip
+ *    (`app_metadata.provider === 'google'`) prevented plan tier from ever
+ *    being refreshed for Google users after initial load, and caused silent
+ *    failures when the auth state changed (e.g. after an upgrade).
+ *  - Added a guard on the /auth/callback path only — we let AuthCallback
+ *    own the routing logic there and don't want UserPlanContext to trigger
+ *    a competing navigation.
+ *  - Debounced rapid auth-state events (SIGNED_IN + TOKEN_REFRESHED can
+ *    fire back-to-back on the OAuth redirect) so we only fetch once.
  */
 
 import {
@@ -12,6 +21,7 @@ import {
   useContext,
   useState,
   useEffect,
+  useRef,
   useCallback,
   type ReactNode,
 } from 'react';
@@ -51,6 +61,7 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
   const [planTier, setPlanTier] = useState<PlanTier>('free');
   const [isLoading, setIsLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchPlanTier = useCallback(async () => {
     try {
@@ -75,10 +86,11 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
 
       if (error) {
         console.warn(
-          'UserPlanContext: Failed to fetch plan_tier from users table:',
+          'UserPlanContext: Failed to fetch plan_tier — user row may not exist yet:',
           error.message,
         );
-        // Fallback — treat as free if the row doesn't exist yet
+        // Fallback to free. This is expected for brand-new Google OAuth users
+        // whose handle_new_user trigger hasn't completed yet.
         setPlanTier('free');
       } else {
         const tier = data?.plan_tier;
@@ -97,22 +109,28 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
     fetchPlanTier();
   }, [fetchPlanTier]);
 
-  // Re-fetch when the auth state changes (sign-in / sign-out / token refresh)
+  // Re-fetch when auth state changes — debounced to handle rapid-fire events
+  // (SIGNED_IN + TOKEN_REFRESHED both fire during OAuth redirect).
   useEffect(() => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      // Guard: skip SIGNED_IN events on the /auth/callback page — it handles its own routing
-      if (event === 'SIGNED_IN' && typeof window !== 'undefined') {
-        const currentPath = window.location.pathname;
-        if (currentPath === '/auth/callback') return;
-        // For Google OAuth users arriving via other paths, skip to avoid double-navigation
-        if (session?.user?.app_metadata?.provider === 'google') return;
+      // Let AuthCallback own routing on its own page — don't trigger a
+      // competing navigation by fetching plan tier mid-redirect.
+      if (
+        typeof window !== 'undefined' &&
+        window.location.pathname === '/auth/callback'
+      ) {
+        return;
       }
 
       if (session?.user) {
-        fetchPlanTier();
-      } else {
+        // Debounce: wait 300ms so back-to-back events only trigger one fetch
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+          fetchPlanTier();
+        }, 300);
+      } else if (event === 'SIGNED_OUT') {
         setPlanTier('free');
         setUserId(null);
         setIsLoading(false);
@@ -121,6 +139,7 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
 
     return () => {
       subscription.unsubscribe();
+      if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [fetchPlanTier]);
 
