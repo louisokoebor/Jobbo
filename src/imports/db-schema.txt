@@ -1,0 +1,106 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.application_documents (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  application_id uuid NOT NULL,
+  file_name text NOT NULL,
+  file_url text NOT NULL,
+  doc_type USER-DEFINED NOT NULL DEFAULT 'other'::doc_type_enum,
+  extracted_text text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT application_documents_pkey PRIMARY KEY (id),
+  CONSTRAINT application_documents_application_id_fkey FOREIGN KEY (application_id) REFERENCES public.applications(id)
+);
+CREATE TABLE public.applications (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid NOT NULL,
+  job_url text,
+  job_title text,
+  company text,
+  job_description_raw text,
+  job_parsed_json jsonb,
+  supplementary_context text,
+  civil_service_mode boolean NOT NULL DEFAULT false,
+  status USER-DEFINED NOT NULL DEFAULT 'saved'::application_status_enum,
+  next_action_date date,
+  cv_profile_id uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT applications_pkey PRIMARY KEY (id),
+  CONSTRAINT applications_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id),
+  CONSTRAINT applications_cv_profile_id_fkey FOREIGN KEY (cv_profile_id) REFERENCES public.cv_profiles(id)
+);
+CREATE TABLE public.cover_letters (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  application_id uuid NOT NULL,
+  content text NOT NULL,
+  tone USER-DEFINED NOT NULL DEFAULT 'professional'::cover_letter_tone_enum,
+  pdf_url text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT cover_letters_pkey PRIMARY KEY (id),
+  CONSTRAINT cover_letters_application_id_fkey FOREIGN KEY (application_id) REFERENCES public.applications(id)
+);
+CREATE TABLE public.cv_profiles (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid NOT NULL,
+  label text NOT NULL DEFAULT 'My CV'::text,
+  raw_file_url text,
+  parsed_json jsonb,
+  is_default boolean NOT NULL DEFAULT false,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT cv_profiles_pkey PRIMARY KEY (id),
+  CONSTRAINT cv_profiles_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id)
+);
+CREATE TABLE public.generated_cvs (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  application_id uuid NOT NULL,
+  cv_json jsonb NOT NULL,
+  match_score integer CHECK (match_score >= 0 AND match_score <= 100),
+  template_id text NOT NULL DEFAULT 'clean'::text,
+  pdf_url text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  feedback_json jsonb,
+  feedback_generated_at timestamp with time zone,
+  CONSTRAINT generated_cvs_pkey PRIMARY KEY (id),
+  CONSTRAINT generated_cvs_application_id_fkey FOREIGN KEY (application_id) REFERENCES public.applications(id)
+);
+CREATE TABLE public.interview_notes (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  application_id uuid NOT NULL,
+  notes_text text,
+  interview_date timestamp with time zone,
+  interview_type USER-DEFINED,
+  outcome text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT interview_notes_pkey PRIMARY KEY (id),
+  CONSTRAINT interview_notes_application_id_fkey FOREIGN KEY (application_id) REFERENCES public.applications(id)
+);
+CREATE TABLE public.kv_store_3bbff5cf (
+  key text NOT NULL,
+  value jsonb NOT NULL,
+  CONSTRAINT kv_store_3bbff5cf_pkey PRIMARY KEY (key)
+);
+CREATE TABLE public.templates (
+  id text NOT NULL,
+  name text NOT NULL,
+  preview_image_url text,
+  is_premium boolean NOT NULL DEFAULT false,
+  CONSTRAINT templates_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.users (
+  id uuid NOT NULL,
+  email text NOT NULL UNIQUE,
+  full_name text,
+  avatar_url text,
+  plan_tier USER-DEFINED NOT NULL DEFAULT 'free'::plan_tier_enum,
+  generations_used integer NOT NULL DEFAULT 0,
+  generations_limit integer DEFAULT 3,
+  stripe_customer_id text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT users_pkey PRIMARY KEY (id),
+  CONSTRAINT users_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
+);
