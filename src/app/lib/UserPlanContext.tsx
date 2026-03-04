@@ -17,10 +17,10 @@ import {
 import { supabase } from './supabaseClient';
 import {
   teardownRC,
-  getProEntitlement,
   getCustomerInfo,
   type RCCustomerInfo,
 } from './revenueCatClient';
+import { resolveUserPlan } from './planResolver';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 export type PlanTier = 'free' | 'pro';
@@ -72,33 +72,15 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
 
       setUserId(user.id);
 
-      // ── RevenueCat entitlement check ──
+     const resolvedPlan = await resolveUserPlan(user.id);
+      setPlanTier(resolvedPlan.planTier);
+
       try {
-        const isPro = await getProEntitlement(user.id);
         const info = await getCustomerInfo(user.id);
         setRcCustomerInfo(info);
-        setPlanTier(isPro ? 'pro' : 'free');
-        setIsLoading(false);
-        return;
       } catch (rcErr) {
-        console.warn(
-          'UserPlanContext: RevenueCat check failed, falling back to Supabase:',
-          rcErr,
-        );
-      }
-
-      // ── Fallback: Supabase users table ──
-      const { data, error } = await supabase
-        .from('users')
-        .select('plan_tier')
-        .eq('id', user.id)
-        .single();
-
-      if (error) {
-        console.warn('UserPlanContext: Failed to fetch plan_tier:', error.message);
-        setPlanTier('free');
-      } else {
-        setPlanTier(data?.plan_tier === 'pro' ? 'pro' : 'free');
+           console.warn('UserPlanContext: Failed to fetch RevenueCat customer info:', rcErr);
+        setRcCustomerInfo(null);
       }
     } catch (err) {
       console.error('UserPlanContext: Unexpected error:', err);

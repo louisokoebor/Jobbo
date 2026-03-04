@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CheckCircle2, Lock, X, Loader2 } from 'lucide-react';
+import { CheckCircle2, Lock, X } from 'lucide-react';
 import {
   getOfferings,
-  purchasePackage as rcPurchasePackage,
-  type PackageId,
 } from '../lib/revenueCatClient';
 import { useUserPlan } from '../lib/UserPlanContext';
-import { supabase } from '../lib/supabaseClient';
+import { useNavigate } from 'react-router';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 interface UpgradeModalProps {
@@ -17,7 +15,7 @@ interface UpgradeModalProps {
 }
 
 interface PackageDisplay {
-  id: PackageId;
+  id: string;
   label: string;
   priceString: string;
   priceAmount: number;
@@ -109,14 +107,13 @@ function SkeletonPlanCard({ isDark }: { isDark: boolean }) {
 /* ─── Main Modal ─────────────────────────────────────────────── */
 export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModalProps) {
   const { refresh, userId } = useUserPlan();
+  const navigate = useNavigate();
 
   const [packages, setPackages] = useState<PackageDisplay[]>([]);
   const [loadingOfferings, setLoadingOfferings] = useState(true);
   const [offeringsError, setOfferingsError] = useState<string | null>(null);
   const [selectedIdx, setSelectedIdx] = useState<number>(1); // default annual
 
-  const [purchasing, setPurchasing] = useState(false);
-  const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const [hovUpgrade, setHovUpgrade] = useState(false);
   const [pressUpgrade, setPressUpgrade] = useState(false);
   const [hovLater, setHovLater] = useState(false);
@@ -153,7 +150,7 @@ export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModa
         const isAnnual = id.includes('annual') || id.includes('year') || id === '$rc_annual';
 
         return {
-          id: (isMonthly ? 'pro_monthly' : isAnnual ? 'pro_annual' : pkg.identifier) as PackageId,
+          id: (isMonthly ? 'pro_monthly' : isAnnual ? 'pro_annual' : pkg.identifier) as string,
           label: isMonthly ? 'Pro Monthly' : isAnnual ? 'Pro Annual' : product?.title || pkg.identifier,
           priceString: base?.price?.formattedPrice || (isMonthly ? '\u00A39/month' : '\u00A379/year'),
           priceAmount: base?.price?.amountMicros ? base.price.amountMicros / 1_000_000 : 0,
@@ -185,42 +182,16 @@ export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModa
 
   /* ── Escape to close ── */
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !purchasing) onClose(); };
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onClose, purchasing]);
+  }, [onClose]);
 
-  /* ── Purchase ── */
-  const handleUpgrade = useCallback(async () => {
-    if (!userId || selectedIdx < 0 || !packages[selectedIdx]) return;
-    const pkg = packages[selectedIdx];
-
-    setPurchasing(true);
-    setPurchaseError(null);
-
-    try {
-      await rcPurchasePackage(userId, pkg.id);
-
-      // Sync DB immediately for instant UX (webhook will also fire)
-      await supabase.from('users').update({ plan_tier: 'pro' }).eq('id', userId);
-
-      // Refresh context
-      await refresh();
-      onClose();
-    } catch (err: any) {
-      const msg = err?.message || '';
-      const cancelled =
-        msg.includes('PURCHASE_CANCELLED') ||
-        msg.includes('USER_CANCELLED') ||
-        msg.toLowerCase().includes('cancel');
-
-      if (!cancelled) {
-        setPurchaseError(msg || 'Purchase failed. Please try again.');
-      }
-    } finally {
-      setPurchasing(false);
-    }
-  }, [userId, selectedIdx, packages, refresh, onClose]);
+  /* ── Navigate to Billing ── */
+  const handleUpgrade = useCallback(() => {
+    onClose();
+    navigate('/billing');
+  }, [onClose, navigate]);
 
   /* ── Savings badge ── */
   const savingsBadge = (() => {
@@ -242,7 +213,7 @@ export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModa
   return (
     <>
       {/* Overlay */}
-      <div onClick={purchasing ? undefined : onClose}
+      <div onClick={onClose}
         style={{
           position: 'fixed', inset: 0, zIndex: 1500,
           background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
@@ -265,13 +236,13 @@ export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModa
           }}
         >
           {/* Close */}
-          <button onClick={purchasing ? undefined : onClose} aria-label="Close"
+          <button onClick={onClose} aria-label="Close"
             style={{
               position: 'absolute', top: 16, right: 16, background: 'none', border: 'none',
-              cursor: purchasing ? 'not-allowed' : 'pointer', color: secondaryText, padding: 4,
-              display: 'flex', lineHeight: 1, borderRadius: 6, transition: 'color 0.15s', opacity: purchasing ? 0.5 : 1,
+              cursor: 'pointer', color: secondaryText, padding: 4,
+              display: 'flex', lineHeight: 1, borderRadius: 6, transition: 'color 0.15s',
             }}
-            onMouseEnter={e => !purchasing && ((e.currentTarget as HTMLButtonElement).style.color = primaryText)}
+            onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.color = primaryText)}
             onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.color = secondaryText)}
           >
             <X size={18} />
@@ -315,40 +286,34 @@ export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModa
             )}
           </div>
 
-          {purchaseError && (
-            <p style={{ margin: '12px 0 0', fontSize: 13, fontFamily: 'Inter, sans-serif', color: '#EF4444', lineHeight: 1.4, textAlign: 'center' }}>{purchaseError}</p>
-          )}
-
           <button onClick={handleUpgrade}
-            disabled={purchasing || loadingOfferings || packages.length === 0}
+            disabled={loadingOfferings || packages.length === 0}
             onMouseEnter={() => setHovUpgrade(true)}
             onMouseLeave={() => { setHovUpgrade(false); setPressUpgrade(false); }}
             onMouseDown={() => setPressUpgrade(true)}
             onMouseUp={() => setPressUpgrade(false)}
             style={{
               width: '100%', height: 48, marginTop: 24,
-              background: (purchasing || loadingOfferings || packages.length === 0) ? (isDark ? '#334155' : '#CBD5E1') : hovUpgrade ? '#1E40AF' : '#1A56DB',
+              background: (loadingOfferings || packages.length === 0) ? (isDark ? '#334155' : '#CBD5E1') : hovUpgrade ? '#1E40AF' : '#1A56DB',
               color: '#FFFFFF', border: 'none', borderRadius: 8,
-              cursor: (purchasing || loadingOfferings || packages.length === 0) ? 'not-allowed' : 'pointer',
+              cursor: (loadingOfferings || packages.length === 0) ? 'not-allowed' : 'pointer',
               fontSize: 16, fontWeight: 600, fontFamily: 'Inter, sans-serif', lineHeight: 1,
               transform: pressUpgrade ? 'scale(0.97)' : 'scale(1)',
               transition: 'background 0.15s, transform 0.1s',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             }}
           >
-            {purchasing ? (
-              <><Loader2 size={16} style={{ animation: 'upgradeSpinBtn 0.75s linear infinite' }} />Processing...</>
-            ) : (<>Upgrade to Pro &rarr;</>)}
+            Upgrade to Pro &rarr;
           </button>
 
-          <button onClick={purchasing ? undefined : onClose}
+          <button onClick={onClose}
             onMouseEnter={() => setHovLater(true)} onMouseLeave={() => setHovLater(false)}
             style={{
               marginTop: 8, background: 'none', border: 'none',
-              cursor: purchasing ? 'not-allowed' : 'pointer', color: secondaryText,
+              cursor: 'pointer', color: secondaryText,
               fontSize: 13, fontWeight: 500, fontFamily: 'Inter, sans-serif', lineHeight: 1,
               padding: '8px 16px', borderRadius: 6, transition: 'color 0.15s',
-              textDecoration: hovLater ? 'underline' : 'none', opacity: purchasing ? 0.5 : 1,
+              textDecoration: hovLater ? 'underline' : 'none',
             }}
           >Maybe later</button>
 

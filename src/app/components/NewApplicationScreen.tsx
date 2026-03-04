@@ -718,9 +718,11 @@ function SupplementaryDocsCard({ isDark }: { isDark: boolean }) {
 
 function UpgradeButton() {
   const [hov, setHov] = useState(false);
+  const navigate = useNavigate();
   return (
     <button
       type="button"
+      onClick={() => navigate('/billing')}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
       style={{

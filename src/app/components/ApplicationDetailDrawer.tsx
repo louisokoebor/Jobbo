@@ -1097,7 +1097,7 @@ function CoverLetterTab({ app, isDark }: { app: AppDetailData; isDark: boolean }
             color: isDark ? '#94A3B8' : '#64748B', lineHeight: 1.5,
           }}>Upgrade to generate tailored cover letters for every application.</p>
         </div>
-        <DrawerButton variant="primary" isDark={isDark} fullWidth>Upgrade to Pro</DrawerButton>
+        <DrawerButton variant="primary" isDark={isDark} fullWidth onClick={() => navigate('/billing')}>Upgrade to Pro</DrawerButton>
       </div>
     );
   }
