@@ -14,17 +14,19 @@ import {
   ChevronDown, ChevronUp, ChevronLeft, Check, FileText,
   Download, ArrowRight, RefreshCw, Lock, Sparkles, Brain,
   Lightbulb, AlertTriangle, Mail, Calendar, Phone, Video,
-  Users, ClipboardList, ExternalLink,
+  Users, ClipboardList, ExternalLink, Pencil,
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { toast, Toaster } from 'sonner';
 import { useUserPlan } from '../lib/UserPlanContext';
 import { downloadCvPdf, downloadCoverLetterPdf } from '../lib/pdf-generator.js';
+import { GENERIC_TRAITS } from '../lib/genericTraits';
+import { InterviewPrepTab } from './InterviewPrepTab';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 type Theme = 'dark' | 'light';
 type StatusKey = 'saved' | 'applied' | 'interview_scheduled' | 'interview_done' | 'offer' | 'rejected';
-type TabKey = 'overview' | 'feedback' | 'cv' | 'cover-letter' | 'notes';
+type TabKey = 'overview' | 'feedback' | 'cv' | 'cover-letter' | 'interview-prep' | 'notes';
 type InterviewType = 'phone' | 'video' | 'in-person' | 'assessment';
 type Tone = 'professional' | 'conversational' | 'confident';
 
@@ -87,11 +89,12 @@ const STATUS_ORDER: StatusKey[] = [
 ];
 
 const TABS: { key: TabKey; label: string }[] = [
-  { key: 'overview',      label: 'Overview' },
-  { key: 'feedback',      label: 'Feedback' },
-  { key: 'cv',            label: 'CV' },
-  { key: 'cover-letter',  label: 'Cover Letter' },
-  { key: 'notes',         label: 'Notes' },
+  { key: 'overview',        label: 'Overview' },
+  { key: 'feedback',        label: 'Feedback' },
+  { key: 'cv',              label: 'CV' },
+  { key: 'cover-letter',    label: 'Cover Letter' },
+  { key: 'interview-prep',  label: 'Interview Prep' },
+  { key: 'notes',           label: 'Notes' },
 ];
 
 /* ─── Helpers ────────────────────────────────────────────────── */
@@ -112,22 +115,7 @@ function barColor(n: number) {
   return '#EF4444';
 }
 
-function verdictText(score: number) {
-  if (score >= 90) return { text: 'Strong Match', color: '#10B981' };
-  if (score >= 80) return { text: 'Good Match',   color: '#10B981' };
-  if (score >= 60) return { text: 'Moderate Match', color: '#F59E0B' };
-  if (score >= 40) return { text: 'Weak Match',   color: '#EF4444' };
-  return { text: 'Poor Match', color: '#EF4444' };
-}
 
-function likelihoodPill(lk: string) {
-  const l = (lk || '').toLowerCase();
-  if (l.includes('very_likely') || l.includes('likely') && !l.includes('unlikely'))
-    return { text: 'Likely to be interviewed', color: '#10B981', bg: 'rgba(16,185,129,0.12)' };
-  if (l.includes('possible'))
-    return { text: 'Possible to be interviewed', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' };
-  return { text: 'Unlikely to be interviewed', color: '#EF4444', bg: 'rgba(239,68,68,0.12)' };
-}
 
 /* ─── Shared inline style factories ──────────────────────────── */
 function sectionLabel(isDark: boolean): React.CSSProperties {
@@ -418,18 +406,21 @@ function OverviewTab({ app, isDark, onStatusChange }: {
 /* ═══════════════════════════════════════════════════════════════
    FEEDBACK TAB
    ═══════════════════════════════════════════════════════════════ */
-function FeedbackTab({ app, generatedCv, setGeneratedCv, isDark, feedback, analysisLoading, onRunAnalysis }: {
+function FeedbackTab({ app, generatedCv, setGeneratedCv, isDark, feedback, analysisLoading, onRunAnalysis, coverLetter }: {
   app: AppData; generatedCv: GeneratedCv | null;
   setGeneratedCv: React.Dispatch<React.SetStateAction<GeneratedCv | null>>;
   isDark: boolean;
   feedback: any;
   analysisLoading: boolean;
   onRunAnalysis: (cvId: string) => void;
+  coverLetter: CoverLetterData | null;
 }) {
   const navigate = useNavigate();
+  const { planTier } = useUserPlan();
+  const isPro = planTier === 'pro';
   const analysing = analysisLoading;
   const [loadingCopy, setLoadingCopy] = useState('Reading the job requirements…');
-  const [expandedBars, setExpandedBars] = useState<Record<string, boolean>>({});
+
   const [strengthsOpen, setStrengthsOpen] = useState(true);
   const [weaknessesOpen, setWeaknessesOpen] = useState(true);
 
@@ -503,37 +494,65 @@ function FeedbackTab({ app, generatedCv, setGeneratedCv, isDark, feedback, analy
 
   // ─── Feedback loaded ───
   const fb = feedback;
-  const sc = scoreColor(fb.overall_score);
-  const vd = verdictText(fb.overall_score);
-  const lk = likelihoodPill(fb.interview_likelihood);
-  const toggleBar = (k: string) => setExpandedBars(p => ({ ...p, [k]: !p[k] }));
   const cvQuality = fb.cv_quality || {};
-  const qualityKeys: { key: string; label: string }[] = [
-    { key: 'summary_quality', label: 'Summary Quality' },
-    { key: 'bullet_strength', label: 'Bullet Strength' },
-    { key: 'keyword_match',   label: 'Keyword Match' },
+  const qualityPills: { key: string; label: string }[] = [
+    { key: 'summary_quality', label: 'Summary' },
+    { key: 'bullet_strength', label: 'Bullets' },
+    { key: 'keyword_match',   label: 'Keywords' },
   ];
+
+  // ─── Change 3: Filter missing keywords ───
+  const cvJson = generatedCv?.cv_json || {};
+  const cvSkills: string[] = (cvJson.skills || cvJson.key_skills || []).map((s: string) => s.toLowerCase().trim());
+  const filteredMissingKeywords = (fb.missing_keywords || []).filter((kw: string) => {
+    const norm = kw.toLowerCase().trim();
+    if (norm.length < 4) return false;
+    if (GENERIC_TRAITS.has(norm)) return false;
+    if (cvSkills.includes(norm)) return false;
+    return true;
+  });
+
+  // ─── Change 4: Cover letter gap coverage ───
+  const skillsGap: string[] = cvJson.skills_gap || [];
+  const clText = (coverLetter?.content || '').toLowerCase();
+  const gapCoverage = skillsGap.map(gap => {
+    // Check if cover letter mentions key words from the gap term
+    const words = gap.toLowerCase().split(/[\s\-\/]+/).filter(w => w.length > 3);
+    const addressed = clText.length > 0 && words.some(w => clText.includes(w));
+    return { gap, addressed };
+  });
+  const addressedGaps = gapCoverage.filter(g => g.addressed);
+  const unaddressedGaps = gapCoverage.filter(g => !g.addressed);
 
   return (
     <div className="adp-two-col" style={{ display: 'flex', gap: 24 }}>
       {/* Left */}
       <div className="adp-col-left" style={{ flex: '65%', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* Score hero */}
-        <div style={{ ...surfaceCard(isDark), textAlign: 'center' as const, display: 'flex', flexDirection: 'column' as const, alignItems: 'center' }}>
-          <div style={{
-            width: 88, height: 88, borderRadius: '50%', border: `4px solid ${sc}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <span style={{ fontSize: 32, fontWeight: 700, fontFamily: font, color: sc, lineHeight: 1 }}>{fb.overall_score}</span>
-          </div>
-          <span style={{ marginTop: 12, fontSize: 16, fontWeight: 700, fontFamily: font, color: vd.color }}>{vd.text}</span>
-          <p style={{ margin: '8px auto 0', fontSize: 14, fontFamily: font, color: secondaryText, lineHeight: 1.6, maxWidth: 480 }}>
+        {/* Match Summary card (Change 1) */}
+        <div style={surfaceCard(isDark)}>
+          <span style={sectionLabel(isDark)}>Match Summary</span>
+          <p style={{ margin: '0 0 16px', fontSize: 14, fontFamily: font, color: primaryText, lineHeight: 1.7 }}>
             {fb.verdict_summary}
           </p>
-          <span title={fb.interview_likelihood_reasoning} style={{
-            marginTop: 16, padding: '4px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, fontFamily: font,
-            background: lk.bg, color: lk.color, cursor: 'help',
-          }}>{lk.text}</span>
+          {/* 3 stat pills */}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            {qualityPills.map(({ key, label }) => {
+              const item = cvQuality[key] || { score: 0 };
+              const bc = barColor(item.score);
+              return (
+                <span key={key} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '6px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600, fontFamily: font,
+                  background: isDark ? '#1E293B' : '#FFFFFF',
+                  border: `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)'}`,
+                  color: primaryText,
+                }}>
+                  {label} <span style={{ color: bc }}>{item.score}/10</span>
+                </span>
+              );
+            })}
+          </div>
+          {/* Re-run button */}
           <button
             onClick={handleRunAnalysis}
             disabled={analysing}
@@ -563,34 +582,6 @@ function FeedbackTab({ app, generatedCv, setGeneratedCv, isDark, feedback, analy
             <RefreshCw size={14} />
             Re-run Analysis
           </button>
-        </div>
-
-        {/* CV Quality */}
-        <div style={surfaceCard(isDark)}>
-          <span style={{ ...sectionLabel(isDark), marginBottom: 16 }}>CV Quality</span>
-          {qualityKeys.map(({ key, label }) => {
-            const item = cvQuality[key] || { score: 0, feedback: '' };
-            const bc = barColor(item.score);
-            const expanded = expandedBars[key];
-            return (
-              <div key={key} style={{ marginBottom: 12 }}>
-                <button onClick={() => toggleBar(key)} style={{
-                  display: 'flex', alignItems: 'center', gap: 12, width: '100%',
-                  background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0',
-                  fontFamily: font, fontSize: 13, fontWeight: 500, color: primaryText,
-                }}>
-                  <span style={{ width: 120, textAlign: 'left' as const, flexShrink: 0 }}>{label}</span>
-                  <div style={{ flex: 1, height: 8, borderRadius: 999, background: isDark ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.2)', overflow: 'hidden' }}>
-                    <div className="adp-bar-fill" style={{ width: `${item.score * 10}%`, height: '100%', borderRadius: 999, background: bc, transition: 'width 0.6s ease' }} />
-                  </div>
-                  <span style={{ width: 40, textAlign: 'right' as const, fontSize: 13, fontWeight: 600, fontFamily: font, color: bc }}>{item.score}/10</span>
-                </button>
-                {expanded && item.feedback && (
-                  <p style={{ margin: '4px 0 0', padding: '8px 0', fontSize: 13, fontFamily: font, color: secondaryText, lineHeight: 1.5 }}>{item.feedback}</p>
-                )}
-              </div>
-            );
-          })}
         </div>
 
         {/* Strengths */}
@@ -642,6 +633,86 @@ function FeedbackTab({ app, generatedCv, setGeneratedCv, isDark, feedback, analy
             ))}
           </div>
         )}
+
+        {/* Cover Letter Gap Coverage (Change 4) */}
+        {skillsGap.length > 0 && (
+          <div style={surfaceCard(isDark)}>
+            <span style={sectionLabel(isDark)}>Cover Letter Gap Coverage</span>
+            {coverLetter ? (
+              <>
+                {addressedGaps.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, fontFamily: font, color: '#10B981', display: 'block', marginBottom: 8 }}>
+                      Addressed in your cover letter
+                    </span>
+                    {addressedGaps.map((g, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <Check size={14} color="#10B981" style={{ flexShrink: 0 }} />
+                        <span style={{ fontSize: 13, fontFamily: font, color: secondaryText }}>{g.gap}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {unaddressedGaps.length > 0 && (
+                  <div>
+                    <span style={{ fontSize: 13, fontWeight: 600, fontFamily: font, color: '#F59E0B', display: 'block', marginBottom: 8 }}>
+                      Not yet addressed
+                    </span>
+                    {unaddressedGaps.map((g, i) => (
+                      <div key={i} style={{ marginBottom: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid #F59E0B', flexShrink: 0, boxSizing: 'border-box' as const }} />
+                          <span style={{ fontSize: 13, fontFamily: font, color: secondaryText }}>{g.gap}</span>
+                        </div>
+                        <span style={{ fontSize: 12, fontFamily: font, color: isDark ? '#64748B' : '#94A3B8', marginLeft: 22, display: 'block', marginTop: 2 }}>
+                          Consider mentioning this in your cover letter
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ textAlign: 'center' as const, padding: '16px 0' }}>
+                <p style={{ margin: '0 0 12px', fontSize: 13, fontFamily: font, color: secondaryText, lineHeight: 1.5 }}>
+                  Generate a cover letter to see how well it addresses your CV gaps
+                </p>
+                {isPro ? (
+                  <Btn variant="secondary" isDark={isDark} icon={<ArrowRight size={14} />}
+                    onClick={() => navigate(`/applications/${app.id}?tab=cover-letter`)}>
+                    Generate Cover Letter
+                  </Btn>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <button
+                      onClick={() => navigate('/billing')}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        height: 36, padding: '10px 16px',
+                        background: isDark ? '#263348' : '#F8FAFC',
+                        color: isDark ? '#94A3B8' : '#64748B',
+                        border: `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.3)'}`,
+                        borderRadius: 8, cursor: 'not-allowed',
+                        fontSize: 13, fontWeight: 500, fontFamily: font, lineHeight: 1,
+                      }}
+                    >
+                      <Lock size={13} /> Generate Cover Letter
+                    </button>
+                    <p style={{ margin: '6px 0 0', fontSize: 12, fontFamily: font, color: secondaryText, lineHeight: 1.4 }}>
+                      Cover letters are a Pro feature.{' '}
+                      <span
+                        onClick={() => navigate('/billing')}
+                        style={{ color: '#1A56DB', fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        Upgrade to Pro &rarr;
+                      </span>
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Right */}
@@ -672,12 +743,12 @@ function FeedbackTab({ app, generatedCv, setGeneratedCv, isDark, feedback, analy
           </div>
         )}
 
-        {/* Missing keywords */}
-        {fb.missing_keywords && fb.missing_keywords.length > 0 && (
+        {/* Missing keywords (filtered — Change 3) */}
+        {filteredMissingKeywords.length >= 2 && (
           <div style={surfaceCard(isDark)}>
             <span style={sectionLabel(isDark)}>Missing Keywords</span>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
-              {fb.missing_keywords.map((kw: string, i: number) => (
+              {filteredMissingKeywords.map((kw: string, i: number) => (
                 <span key={i} style={{
                   padding: '4px 10px', borderRadius: 999, fontSize: 13, fontWeight: 500, fontFamily: font,
                   background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.25)', color: '#F59E0B',
@@ -844,8 +915,68 @@ function CoverLetterTabContent({ app, generatedCv, coverLetter, setCoverLetter, 
   setCoverLetter: React.Dispatch<React.SetStateAction<CoverLetterData | null>>;
   isDark: boolean;
 }) {
+  const navigate = useNavigate();
+  const { planTier } = useUserPlan();
+  const isPro = planTier === 'pro';
   const primaryText = isDark ? '#F8FAFC' : '#0F172A';
   const secondaryText = isDark ? '#94A3B8' : '#64748B';
+
+  // Gate: free users see upgrade prompt instead of cover letter content
+  if (!isPro) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
+        <div style={{
+          maxWidth: 480, width: '100%', padding: 40, borderRadius: 12,
+          background: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.6)',
+          backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+          border: `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)'}`,
+          boxShadow: isDark ? '0 4px 24px rgba(0,0,0,0.4)' : '0 4px 24px rgba(15,23,42,0.08)',
+          display: 'flex', flexDirection: 'column' as const, alignItems: 'center',
+        }}>
+          <Lock size={32} color="#1A56DB" style={{ marginBottom: 16 }} />
+          <h3 style={{
+            margin: '0 0 8px', fontSize: 20, fontWeight: 600, fontFamily: font,
+            color: primaryText, textAlign: 'center' as const,
+          }}>Cover Letters are a Pro feature</h3>
+          <p style={{
+            margin: '0 0 24px', fontSize: 14, fontFamily: font,
+            color: secondaryText, textAlign: 'center' as const, lineHeight: 1.6,
+          }}>
+            Upgrade to Pro to generate tailored cover letters that address your CV gaps and make a strong first impression.
+          </p>
+          <div style={{ alignSelf: 'stretch', marginBottom: 24 }}>
+            {[
+              'AI-written cover letters tailored to each job',
+              'Automatically addresses your CV gaps',
+              'Multiple tone options (professional, confident, conversational)',
+            ].map((text, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: i < 2 ? 8 : 0 }}>
+                <Check size={14} color="#10B981" style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontFamily: font, color: primaryText }}>{text}</span>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => navigate('/billing')}
+            style={{
+              width: '100%', height: 44, borderRadius: 8, border: 'none',
+              background: '#1A56DB', color: '#FFF', cursor: 'pointer',
+              fontSize: 14, fontWeight: 600, fontFamily: font,
+              transition: 'background 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = '#1E40AF'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = '#1A56DB'; }}
+          >
+            Upgrade to Pro →
+          </button>
+          <p style={{
+            margin: '8px 0 0', fontSize: 12, fontFamily: font,
+            color: secondaryText, textAlign: 'center' as const,
+          }}>£9/mo or £6.60/mo billed annually</p>
+        </div>
+      </div>
+    );
+  }
   const [selectedTone, setSelectedTone] = useState<Tone>('professional');
   const [generating, setGenerating] = useState(false);
   const [editContent, setEditContent] = useState(coverLetter?.content || '');
@@ -1119,14 +1250,15 @@ export function ApplicationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { planTier } = useUserPlan();
 
   const [theme, setTheme] = useState<Theme>(() =>
-    (typeof window !== 'undefined' && (localStorage.getItem('jobbo-theme') as Theme)) || 'dark',
+    (typeof window !== 'undefined' && (localStorage.getItem('applyly-theme') as Theme)) || 'light',
   );
   const isDark = theme === 'dark';
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('jobbo-theme', theme);
+    localStorage.setItem('applyly-theme', theme);
   }, [theme]);
 
   const primaryText = isDark ? '#F8FAFC' : '#0F172A';
@@ -1269,6 +1401,31 @@ export function ApplicationDetailPage() {
     })();
   }, [id, runAnalysis]);
 
+  /* ─── Inline editing for title/company ──────────────────────── */
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editingCompany, setEditingCompany] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [companyDraft, setCompanyDraft] = useState('');
+
+  const saveInlineField = async (field: 'job_title' | 'company', value: string, original: string) => {
+    if (!app || !value.trim() || value.trim() === original) {
+      if (field === 'job_title') setEditingTitle(false);
+      else setEditingCompany(false);
+      return;
+    }
+    const trimmed = value.trim();
+    // Optimistic update
+    setApp(prev => prev ? { ...prev, [field]: trimmed } : prev);
+    if (field === 'job_title') setEditingTitle(false);
+    else setEditingCompany(false);
+
+    const { error } = await supabase.from('applications').update({ [field]: trimmed }).eq('id', app.id);
+    if (error) {
+      toast.error(`Failed to update ${field === 'job_title' ? 'job title' : 'company name'}`);
+      setApp(prev => prev ? { ...prev, [field]: original } : prev);
+    }
+  };
+
   /* ─── Status change ────────────────────────────────────────── */
   const [statusOpen, setStatusOpen] = useState(false);
   const statusRef = useRef<HTMLDivElement>(null);
@@ -1345,8 +1502,61 @@ export function ApplicationDetailPage() {
               marginTop: 8, flexWrap: 'wrap', gap: 12,
             }}>
               <div>
-                <h1 style={{ margin: 0, fontSize: 28, fontWeight: 600, fontFamily: font, color: primaryText, lineHeight: 1.3 }}>{app.job_title}</h1>
-                <p style={{ margin: '4px 0 0', fontSize: 16, fontFamily: font, color: secondaryText }}>{app.company}</p>
+                {/* Job title — inline editable */}
+                {editingTitle ? (
+                  <input
+                    autoFocus
+                    defaultValue={app.job_title}
+                    onChange={e => setTitleDraft(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') saveInlineField('job_title', (e.target as HTMLInputElement).value, app.job_title);
+                      if (e.key === 'Escape') setEditingTitle(false);
+                    }}
+                    onBlur={e => saveInlineField('job_title', e.target.value, app.job_title)}
+                    style={{
+                      background: 'transparent', border: 'none', borderBottom: '1px solid #1A56DB',
+                      color: primaryText, fontSize: 28, fontWeight: 600, fontFamily: font,
+                      padding: '0 2px', outline: 'none', width: 'auto', minWidth: 120, lineHeight: 1.3,
+                    }}
+                  />
+                ) : (
+                  <h1
+                    className="adp-editable-row"
+                    onClick={() => { setTitleDraft(app.job_title); setEditingTitle(true); }}
+                    style={{ margin: 0, fontSize: 28, fontWeight: 600, fontFamily: font, color: primaryText, lineHeight: 1.3, cursor: 'text', display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    {app.job_title}
+                    <Pencil size={13} className="adp-edit-icon" style={{ color: '#6B7280', opacity: 0.6, cursor: 'pointer', verticalAlign: 'middle', transition: 'opacity 0.15s', flexShrink: 0 }} />
+                  </h1>
+                )}
+
+                {/* Company — inline editable */}
+                {editingCompany ? (
+                  <input
+                    autoFocus
+                    defaultValue={app.company}
+                    onChange={e => setCompanyDraft(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') saveInlineField('company', (e.target as HTMLInputElement).value, app.company);
+                      if (e.key === 'Escape') setEditingCompany(false);
+                    }}
+                    onBlur={e => saveInlineField('company', e.target.value, app.company)}
+                    style={{
+                      background: 'transparent', border: 'none', borderBottom: '1px solid #1A56DB',
+                      color: secondaryText, fontSize: 16, fontWeight: 400, fontFamily: font,
+                      padding: '0 2px', outline: 'none', width: 'auto', minWidth: 120, marginTop: 4,
+                    }}
+                  />
+                ) : (
+                  <p
+                    className="adp-editable-row"
+                    onClick={() => { setCompanyDraft(app.company); setEditingCompany(true); }}
+                    style={{ margin: '4px 0 0', fontSize: 16, fontFamily: font, color: secondaryText, cursor: 'text', display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    {app.company}
+                    <Pencil size={13} className="adp-edit-icon" style={{ color: '#6B7280', opacity: 0.6, cursor: 'pointer', verticalAlign: 'middle', transition: 'opacity 0.15s', flexShrink: 0 }} />
+                  </p>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 {/* Status dropdown */}
@@ -1406,9 +1616,10 @@ export function ApplicationDetailPage() {
             }}>
               {TABS.map(tab => {
                 const active = activeTab === tab.key;
+                const showLock = tab.key === 'cover-letter' && planTier !== 'pro';
                 return (
                   <TabBtn key={tab.key} label={tab.label} active={active} isDark={isDark}
-                    onClick={() => switchTab(tab.key)} />
+                    onClick={() => switchTab(tab.key)} showLock={showLock} />
                 );
               })}
             </div>
@@ -1420,9 +1631,18 @@ export function ApplicationDetailPage() {
               transition: 'opacity 0.15s ease, transform 0.15s ease',
             }}>
               {activeTab === 'overview' && <OverviewTab app={app} isDark={isDark} onStatusChange={handleStatusChange} />}
-              {activeTab === 'feedback' && <FeedbackTab app={app} generatedCv={generatedCv} setGeneratedCv={setGeneratedCv} isDark={isDark} feedback={feedback} analysisLoading={analysisLoading} onRunAnalysis={runAnalysis} />}
+              {activeTab === 'feedback' && <FeedbackTab app={app} generatedCv={generatedCv} setGeneratedCv={setGeneratedCv} isDark={isDark} feedback={feedback} analysisLoading={analysisLoading} onRunAnalysis={runAnalysis} coverLetter={coverLetter} />}
               {activeTab === 'cv' && <CvTabContent app={app} generatedCv={generatedCv} isDark={isDark} />}
               {activeTab === 'cover-letter' && <CoverLetterTabContent app={app} generatedCv={generatedCv} coverLetter={coverLetter} setCoverLetter={setCoverLetter} isDark={isDark} />}
+              {activeTab === 'interview-prep' && (
+                <InterviewPrepTab
+                  applicationId={app.id}
+                  jobTitle={app.job_title}
+                  hasGeneratedCv={!!generatedCv}
+                  isDark={isDark}
+                  onSwitchTab={(tab) => switchTab(tab as TabKey)}
+                />
+              )}
               {activeTab === 'notes' && <NotesTabContent app={app} initialNotes={notesData} isDark={isDark} />}
             </div>
           </>
@@ -1443,6 +1663,9 @@ export function ApplicationDetailPage() {
         @keyframes adp-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .adp-spin { animation: adp-spin 1s linear infinite; }
 
+        .adp-editable-row .adp-edit-icon { opacity: 0.4; }
+        .adp-editable-row:hover .adp-edit-icon { opacity: 1; }
+
         @media (max-width: 767px) {
           .adp-two-col { flex-direction: column !important; }
           .adp-col-left, .adp-col-right { flex: 1 1 100% !important; }
@@ -1457,14 +1680,15 @@ export function ApplicationDetailPage() {
 }
 
 /* ─── Tab button ─────────────────────────────────────────────── */
-function TabBtn({ label, active, isDark, onClick }: {
-  label: string; active: boolean; isDark: boolean; onClick: () => void;
+function TabBtn({ label, active, isDark, onClick, showLock = false }: {
+  label: string; active: boolean; isDark: boolean; onClick: () => void; showLock?: boolean;
 }) {
   const [h, setH] = useState(false);
   return (
     <button onClick={onClick}
       onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       style={{
+        display: 'flex', alignItems: 'center', gap: 5,
         background: 'none', border: 'none',
         borderBottom: active ? '2px solid #1A56DB' : '2px solid transparent',
         marginBottom: -1,
@@ -1474,6 +1698,6 @@ function TabBtn({ label, active, isDark, onClick }: {
         transition: 'color 0.15s, border-color 0.15s',
         whiteSpace: 'nowrap', flexShrink: 0,
       }}
-    >{label}</button>
+    >{label}{showLock && <Lock size={11} style={{ opacity: 0.7 }} />}</button>
   );
 }

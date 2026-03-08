@@ -1,8 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { CheckCircle2, Lock, X } from 'lucide-react';
-import {
-  getOfferings,
-} from '../lib/revenueCatClient';
 import { useUserPlan } from '../lib/UserPlanContext';
 import { useNavigate } from 'react-router';
 
@@ -12,15 +9,6 @@ interface UpgradeModalProps {
   onClose: () => void;
   used?: number;
   max?: number;
-}
-
-interface PackageDisplay {
-  id: string;
-  label: string;
-  priceString: string;
-  priceAmount: number;
-  subtitle: string;
-  rcPackage: any;
 }
 
 /* ─── Circular Progress Ring ─────────────────────────────────── */
@@ -87,31 +75,11 @@ function PlanCard({ title, price, subtitle, badge, selected, isDark, onClick }: 
   );
 }
 
-/* ─── Skeleton Card ──────────────────────────────────────────── */
-function SkeletonPlanCard({ isDark }: { isDark: boolean }) {
-  const bg = isDark ? 'rgba(148,163,184,0.08)' : 'rgba(148,163,184,0.12)';
-  return (
-    <div style={{
-      flex: 1, padding: 16, borderRadius: 10,
-      border: `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)'}`,
-      background: isDark ? '#263348' : '#F8FAFC',
-      display: 'flex', flexDirection: 'column', gap: 8,
-    }}>
-      <div className="jb-shimmer" style={{ width: '60%', height: 14, borderRadius: 6, background: bg }} />
-      <div className="jb-shimmer" style={{ width: '50%', height: 24, borderRadius: 6, background: bg }} />
-      <div className="jb-shimmer" style={{ width: '75%', height: 12, borderRadius: 6, background: bg }} />
-    </div>
-  );
-}
-
 /* ─── Main Modal ─────────────────────────────────────────────── */
 export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModalProps) {
   const { refresh, userId } = useUserPlan();
   const navigate = useNavigate();
 
-  const [packages, setPackages] = useState<PackageDisplay[]>([]);
-  const [loadingOfferings, setLoadingOfferings] = useState(true);
-  const [offeringsError, setOfferingsError] = useState<string | null>(null);
   const [selectedIdx, setSelectedIdx] = useState<number>(1); // default annual
 
   const [hovUpgrade, setHovUpgrade] = useState(false);
@@ -122,63 +90,10 @@ export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModa
   const secondaryText = isDark ? '#94A3B8' : '#64748B';
   const borderColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)';
 
-  /* ── Fetch offerings ── */
-  const loadOfferings = useCallback(async () => {
-    if (!userId) return;
-    setLoadingOfferings(true);
-    setOfferingsError(null);
-
-    try {
-      const offering = await getOfferings(userId);
-      if (!offering) {
-        // No RC offering → show hardcoded fallback prices
-        setPackages([
-          { id: 'pro_monthly', label: 'Pro Monthly', priceString: '\u00A39/month', priceAmount: 9, subtitle: 'Billed monthly', rcPackage: null },
-          { id: 'pro_annual', label: 'Pro Annual', priceString: '\u00A379/year', priceAmount: 79, subtitle: 'Billed annually', rcPackage: null },
-        ]);
-        setSelectedIdx(1);
-        return;
-      }
-
-      const pkgs: PackageDisplay[] = offering.availablePackages.map((pkg: any) => {
-        const product = pkg.webBillingProduct;
-        const defaultOption = product?.defaultSubscriptionOption;
-        const base = defaultOption?.base;
-
-        const id = (pkg.identifier || '').toLowerCase();
-        const isMonthly = id.includes('month') || id === '$rc_monthly';
-        const isAnnual = id.includes('annual') || id.includes('year') || id === '$rc_annual';
-
-        return {
-          id: (isMonthly ? 'pro_monthly' : isAnnual ? 'pro_annual' : pkg.identifier) as string,
-          label: isMonthly ? 'Pro Monthly' : isAnnual ? 'Pro Annual' : product?.title || pkg.identifier,
-          priceString: base?.price?.formattedPrice || (isMonthly ? '\u00A39/month' : '\u00A379/year'),
-          priceAmount: base?.price?.amountMicros ? base.price.amountMicros / 1_000_000 : 0,
-          subtitle: isMonthly ? 'Billed monthly' : isAnnual ? 'Billed annually' : '',
-          rcPackage: pkg,
-        };
-      });
-
-      // Sort monthly first
-      pkgs.sort((a, b) => {
-        if (a.id === 'pro_monthly') return -1;
-        if (b.id === 'pro_monthly') return 1;
-        return 0;
-      });
-
-      setPackages(pkgs);
-      // Default select annual
-      const annualIdx = pkgs.findIndex(p => p.id === 'pro_annual');
-      setSelectedIdx(annualIdx >= 0 ? annualIdx : pkgs.length - 1);
-    } catch (err: any) {
-      console.error('[UpgradeModal] Failed to fetch offerings:', err);
-      setOfferingsError(err?.message || 'Failed to load pricing');
-    } finally {
-      setLoadingOfferings(false);
-    }
-  }, [userId]);
-
-  useEffect(() => { loadOfferings(); }, [loadOfferings]);
+  const packages = [
+    { id: 'pro_monthly', label: 'Pro Monthly', priceString: '\u00A39/month', subtitle: 'Billed monthly' },
+    { id: 'pro_annual', label: 'Pro Annual', priceString: '\u00A379/year', subtitle: 'Billed annually' },
+  ];
 
   /* ── Escape to close ── */
   useEffect(() => {
@@ -192,16 +107,6 @@ export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModa
     onClose();
     navigate('/billing');
   }, [onClose, navigate]);
-
-  /* ── Savings badge ── */
-  const savingsBadge = (() => {
-    const monthly = packages.find(p => p.id === 'pro_monthly');
-    const annual = packages.find(p => p.id === 'pro_annual');
-    if (!monthly || !annual || monthly.priceAmount <= 0) return undefined;
-    const annualEquiv = monthly.priceAmount * 12;
-    const pct = Math.round(((annualEquiv - annual.priceAmount) / annualEquiv) * 100);
-    return pct > 0 ? `Save ${pct}%` : undefined;
-  })();
 
   const features = [
     'Unlimited CV generations',
@@ -270,33 +175,23 @@ export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModa
 
           {/* Pricing Row */}
           <div style={{ display: 'flex', gap: 12, width: '100%', marginTop: 24 }}>
-            {loadingOfferings ? (
-              <><SkeletonPlanCard isDark={isDark} /><SkeletonPlanCard isDark={isDark} /></>
-            ) : offeringsError ? (
-              <div style={{ width: '100%', padding: '20px 16px', borderRadius: 10, border: `1px solid rgba(239,68,68,0.3)`, background: 'rgba(239,68,68,0.06)', textAlign: 'center' }}>
-                <p style={{ margin: 0, fontSize: 13, fontFamily: 'Inter, sans-serif', color: '#EF4444', lineHeight: 1.5 }}>{offeringsError}</p>
-                <button onClick={loadOfferings} style={{ marginTop: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#1A56DB', fontSize: 13, fontWeight: 500, fontFamily: 'Inter, sans-serif', textDecoration: 'underline' }}>Retry</button>
-              </div>
-            ) : (
-              packages.map((pkg, i) => (
-                <PlanCard key={pkg.id} title={pkg.label} price={pkg.priceString} subtitle={pkg.subtitle}
-                  badge={pkg.id === 'pro_annual' ? savingsBadge : undefined}
-                  selected={selectedIdx === i} isDark={isDark} onClick={() => setSelectedIdx(i)} />
-              ))
-            )}
+            {packages.map((pkg, i) => (
+              <PlanCard key={pkg.id} title={pkg.label} price={pkg.priceString} subtitle={pkg.subtitle}
+                badge={pkg.id === 'pro_annual' ? 'Save 27%' : undefined}
+                selected={selectedIdx === i} isDark={isDark} onClick={() => setSelectedIdx(i)} />
+            ))}
           </div>
 
           <button onClick={handleUpgrade}
-            disabled={loadingOfferings || packages.length === 0}
             onMouseEnter={() => setHovUpgrade(true)}
             onMouseLeave={() => { setHovUpgrade(false); setPressUpgrade(false); }}
             onMouseDown={() => setPressUpgrade(true)}
             onMouseUp={() => setPressUpgrade(false)}
             style={{
               width: '100%', height: 48, marginTop: 24,
-              background: (loadingOfferings || packages.length === 0) ? (isDark ? '#334155' : '#CBD5E1') : hovUpgrade ? '#1E40AF' : '#1A56DB',
+              background: hovUpgrade ? '#1E40AF' : '#1A56DB',
               color: '#FFFFFF', border: 'none', borderRadius: 8,
-              cursor: (loadingOfferings || packages.length === 0) ? 'not-allowed' : 'pointer',
+              cursor: 'pointer',
               fontSize: 16, fontWeight: 600, fontFamily: 'Inter, sans-serif', lineHeight: 1,
               transform: pressUpgrade ? 'scale(0.97)' : 'scale(1)',
               transition: 'background 0.15s, transform 0.1s',
@@ -320,7 +215,7 @@ export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModa
           <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: secondaryText }}>
             <Lock size={12} />
             <span style={{ fontSize: 12, fontWeight: 400, fontFamily: 'Inter, sans-serif', lineHeight: 1.4 }}>
-              Cancel anytime &middot; Powered by RevenueCat
+              Cancel anytime &middot; Powered by Stripe
             </span>
           </div>
         </div>
@@ -328,9 +223,6 @@ export function UpgradeModal({ isDark, onClose, used = 3, max = 3 }: UpgradeModa
 
       <style>{`
         @keyframes upgradeModalIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
-        @keyframes upgradeSpinBtn { to { transform: rotate(360deg); } }
-        @keyframes jb-shimmer { 0% { opacity: 0.4; } 50% { opacity: 0.7; } 100% { opacity: 0.4; } }
-        .jb-shimmer { animation: jb-shimmer 1.5s ease-in-out infinite; }
       `}</style>
     </>
   );

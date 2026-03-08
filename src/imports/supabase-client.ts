@@ -1,7 +1,7 @@
 # Fix Google OAuth — Complete Surgical Prompt
 
 ## Context
-This is a React + Supabase app deployed on Figma Make at jobbo.figma.site. Google OAuth redirects back to `/auth/callback` correctly (confirmed via network tab) but the app immediately redirects to login. The session is never established.
+This is a React + Supabase app deployed on Figma Make at applyly.figma.site. Google OAuth redirects back to `/auth/callback` correctly (confirmed via network tab) but the app immediately redirects to login. The session is never established.
 
 ## Root Cause
 `detectSessionInUrl: false` was set to prevent Supabase stripping the `?code=` from the URL before AuthCallback mounts. But this also stops Supabase from exchanging the code at all — `exchangeCodeForSession()` requires the PKCE verifier that Supabase stores in localStorage, and with `detectSessionInUrl: false` that verifier is never read. The result: exchange silently fails, session is null, app redirects to login.
@@ -192,7 +192,7 @@ export function AuthCallback() {
 
       console.error('[AuthCallback] FAILED — no session after 20s');
       console.error('[AuthCallback] Checklist:');
-      console.error('  1. Is https://jobbo.figma.site/auth/callback in Supabase → Auth → Redirect URLs?');
+      console.error('  1. Is https://applyly.figma.site/auth/callback in Supabase → Auth → Redirect URLs?');
       console.error('  2. Is the handle_new_user SQL trigger installed in Supabase?');
       console.error('  3. Is Google provider enabled in Supabase → Auth → Providers?');
       console.error('  4. Are Client ID and Secret filled in for Google provider?');
@@ -314,8 +314,8 @@ where pu.id is null;
 ## Supabase Dashboard Checklist
 
 Authentication → URL Configuration:
-- Site URL: `https://jobbo.figma.site`
-- Redirect URLs must include exactly: `https://jobbo.figma.site/auth/callback`
+- Site URL: `https://applyly.figma.site`
+- Redirect URLs must include exactly: `https://applyly.figma.site/auth/callback`
 
 Authentication → Providers → Google:
 - Toggle must be ON (green)

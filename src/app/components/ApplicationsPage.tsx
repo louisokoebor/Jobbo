@@ -256,13 +256,13 @@ function AppRow({ app, isDark, onView, onAnalyse, onDelete }: {
 export function ApplicationsPage() {
   const navigate = useNavigate();
   const [theme, setTheme] = useState<Theme>(() =>
-    (typeof window !== 'undefined' && (localStorage.getItem('jobbo-theme') as Theme)) || 'dark',
+    (typeof window !== 'undefined' && (localStorage.getItem('applyly-theme') as Theme)) || 'light',
   );
   const isDark = theme === 'dark';
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('jobbo-theme', theme);
+    localStorage.setItem('applyly-theme', theme);
   }, [theme]);
 
   /* ─── Data State ────────────────────────────────────────────── */
@@ -353,6 +353,7 @@ export function ApplicationsPage() {
         : 'radial-gradient(ellipse at 30% 20%, #EFF6FF 0%, #F1F5F9 70%)',
       color: primaryText, transition: 'background 0.2s, color 0.2s',
       display: 'flex', flexDirection: 'column',
+      overflowX: 'hidden',
     }}>
       {/* Grid bg */}
       <div aria-hidden style={{
@@ -363,9 +364,10 @@ export function ApplicationsPage() {
 
       <SharedNavbar isDark={isDark} onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} />
 
-      <div style={{
+      <div className="jb-content-wrap" style={{
         flex: 1, padding: '32px 24px', maxWidth: 1280, width: '100%',
         margin: '0 auto', position: 'relative', zIndex: 1,
+        overflowX: 'hidden', boxSizing: 'border-box',
       }}>
         {/* ─── Header ─────────────────────────────────────────── */}
         <div className="jb-header" style={{
@@ -403,7 +405,7 @@ export function ApplicationsPage() {
 
         {/* ─── Stats Bar ──────────────────────────────────────── */}
         {!loading && applications.length > 0 && (
-          <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
+          <div className="jb-stats-bar" style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
             <StatCard label="Total" value={stats.total} isDark={isDark} />
             <StatCard label="This Week" value={stats.thisWeek} isDark={isDark} />
             <StatCard label="Interviews" value={stats.interviews} isDark={isDark} />
@@ -415,9 +417,10 @@ export function ApplicationsPage() {
         {!loading && applications.length > 0 && (
           <div className="jb-filters" style={{
             display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24, flexWrap: 'wrap',
+            overflow: 'hidden',
           }}>
             {/* Search */}
-            <div style={{ position: 'relative', maxWidth: 300, flex: '1 1 200px' }}>
+            <div style={{ position: 'relative', maxWidth: 300, flex: '1 1 200px', minWidth: 0 }}>
               <Search size={16} style={{
                 position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
                 color: secondaryText, pointerEvents: 'none',
@@ -443,6 +446,7 @@ export function ApplicationsPage() {
             <div className="jb-pills-scroll" style={{
               display: 'flex', gap: 6, alignItems: 'center', flex: '1 1 auto',
               overflowX: 'auto', WebkitOverflowScrolling: 'touch',
+              minWidth: 0, maxWidth: '100%',
             }}>
               {FILTER_PILLS.map(p => {
                 const active = filter === p.key;
@@ -625,13 +629,19 @@ export function ApplicationsPage() {
         @media (max-width: 767px) {
           .jb-header { flex-direction: column !important; }
           .jb-header .jb-primary-btn { width: 100%; justify-content: center; }
-          .jb-filters { flex-direction: column !important; }
-          .jb-filters > div:first-child { max-width: 100% !important; flex: 1 1 100% !important; }
+          .jb-filters { flex-direction: column !important; align-items: stretch !important; overflow: visible !important; }
+          .jb-filters > div:first-child { max-width: 100% !important; flex: 1 1 100% !important; width: 100% !important; }
           .jb-sort { width: 100%; }
           .jb-sort select { width: 100%; }
-          .jb-pills-scroll { flex: 1 1 100% !important; }
+          .jb-pills-scroll { flex: 1 1 100% !important; max-width: 100% !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+          .jb-pills-scroll::-webkit-scrollbar { display: none; }
           .jb-location { display: none !important; }
           .jb-analyse-btn { display: none !important; }
+          .jb-content-wrap { padding: 20px 16px !important; }
+          .jb-stats-bar { gap: 8px !important; }
+          .jb-stats-bar > div { min-width: 0 !important; flex: 1 1 calc(50% - 4px) !important; }
+          .jb-app-row { padding: 12px 14px !important; gap: 12px !important; }
+          .jb-app-row .jb-avatar { width: 36px !important; height: 36px !important; font-size: 15px !important; }
         }
       `}</style>
     </div>

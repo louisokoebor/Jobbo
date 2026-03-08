@@ -21,7 +21,7 @@ Replace whatever it currently does with exactly this:
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: 'https://jobbo.figma.site/auth/callback',
+          redirectTo: 'https://applyly.figma.site/auth/callback',
           queryParams: {
             access_type: 'offline',
             prompt: 'consent',
@@ -53,7 +53,7 @@ Create a new page/route at /auth/callback.
 
 This page handles the redirect back from Google OAuth.
 It should show a full-screen centred loading spinner
-with the Jobbo logo and "Signing you in…" text.
+with the Applyly logo and "Signing you in…" text.
 Same background as other screens, same theme.
 
 The page logic:

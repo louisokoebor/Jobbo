@@ -1,26 +1,34 @@
 /**
- * BillingPage — Billing & Plan management for Jobbo
+ * BillingPage — Billing & Plan management for Applyly
  *
- * Reads plan state from RevenueCat (source of truth) with Supabase DB fallback.
- * Three-column plan comparison, usage meter, purchase via RC Stripe sheet.
+ * Reads plan state from Supabase DB (source of truth, kept in sync by Stripe webhook).
+ * Three-column plan comparison, usage meter, upgrade via Stripe Checkout redirect.
+ price_1T7JbqHYGHQaP9adhPuFLRK6
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import {
-  Check, X as XIcon, Lock, Zap, ChevronRight, Loader2, ArrowLeft,
+  Check, X as XIcon, Lock, Zap, ChevronRight, Loader2,
 } from 'lucide-react';
 import { SharedNavbar } from './SharedNavbar';
 import { supabase } from '../lib/supabaseClient';
-import {
-  getProEntitlement,
-  getManagementURL,
-  purchasePackage,
-  type PackageId,
-} from '../lib/revenueCatClient';
+import { useUserPlan } from '../lib/UserPlanContext';
+import { projectId, publicAnonKey } from '../lib/supabaseClient';
+
+/* ─── Constants ──────────────────────────────────────────────── */
+const STRIPE_PRICE_MONTHLY = 'price_1T713fQU76dJHu8oq10BA26E';
+const STRIPE_PRICE_ANNUAL = 'price_1T714cQU76dJHu8oOnj4GcXa';
+const SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-3bbff5cf`;
+
+async function getAuthToken(): Promise<string | null> {
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token ?? null;
+}
 
 /* ─── Types ──────────────────────────────────────────────────── */
 type Theme = 'dark' | 'light';
+type PlanId = 'pro_monthly' | 'pro_annual';
 
 interface PlanState {
   planTier: 'free' | 'pro';
@@ -91,15 +99,16 @@ function FeatureRowItem({ label, value, isDark }: { label: string; value: string
 /* ─── Main Component ─────────────────────────────────────────── */
 export function BillingPage() {
   const navigate = useNavigate();
+  const { refresh: refreshGlobalPlan } = useUserPlan();
 
   /* ── Theme ── */
   const [theme, setTheme] = useState<Theme>(() =>
-    (typeof window !== 'undefined' && (localStorage.getItem('jobbo-theme') as Theme)) || 'dark',
+    (typeof window !== 'undefined' && (localStorage.getItem('applyly-theme') as Theme)) || 'light',
   );
   const isDark = theme === 'dark';
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('jobbo-theme', theme);
+    localStorage.setItem('applyly-theme', theme);
   }, [theme]);
 
   /* ── State ── */
@@ -107,13 +116,61 @@ export function BillingPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [plan, setPlan] = useState<PlanState>({ planTier: 'free', generationsUsed: 0, generationsLimit: 3 });
-  const [rcIsPro, setRcIsPro] = useState(false);
-  const [activePlanId, setActivePlanId] = useState<PackageId | 'free'>('free');
+  const [activePlanId, setActivePlanId] = useState<PlanId | 'free'>('free');
+  const [hasStripeCustomer, setHasStripeCustomer] = useState(false);
 
-  const [purchasingId, setPurchasingId] = useState<PackageId | null>(null);
+  const [purchasingId, setPurchasingId] = useState<PlanId | null>(null);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  /* ── Poll for pro upgrade after Stripe checkout ── */
+  const pollForProUpgrade = useCallback(async (uid: string) => {
+    for (let i = 0; i < 12; i++) {
+      await new Promise(r => setTimeout(r, 1500));
+      const { data } = await supabase
+        .from('users')
+        .select('plan_tier, generations_limit')
+        .eq('id', uid)
+        .single();
+
+      console.log('[BillingPage] poll iteration', i, 'plan_tier:', data?.plan_tier, 'generations_limit:', data?.generations_limit);
+
+      // Detect upgrade via plan_tier OR generations_limit (belt-and-suspenders)
+      const isPro = data?.plan_tier === 'pro';
+      const hasProLimit = (data?.generations_limit ?? 0) >= 999;
+
+      if (isPro || hasProLimit) {
+        // Self-heal: if generations_limit is pro but plan_tier isn't, fix it
+        if (hasProLimit && !isPro) {
+          console.log('[BillingPage] self-healing: generations_limit=999 but plan_tier is not pro, writing plan_tier=pro');
+          await supabase.from('users').update({ plan_tier: 'pro' }).eq('id', uid);
+        }
+
+        setPlan(prev => ({
+          ...prev,
+          planTier: 'pro',
+          generationsLimit: data?.generations_limit ?? 999,
+        }));
+        setActivePlanId('pro_monthly');
+        setSuccessMsg("You're now on Pro! \u{1F389}");
+        window.history.replaceState({}, '', '/billing');
+        setTimeout(() => setSuccessMsg(null), 5000);
+        // Refresh global UserPlanContext so all components see pro
+        refreshGlobalPlan();
+        return;
+      }
+    }
+    // After 18s still not updated — force-write plan_tier to pro and set optimistically
+    console.log('[BillingPage] polling timed out, force-writing plan_tier=pro');
+    await supabase.from('users').update({ plan_tier: 'pro', generations_limit: 999 }).eq('id', uid);
+    setPlan(prev => ({ ...prev, planTier: 'pro', generationsLimit: 999 }));
+    setActivePlanId('pro_monthly');
+    setSuccessMsg("You're now on Pro! \u{1F389}");
+    window.history.replaceState({}, '', '/billing');
+    setTimeout(() => setSuccessMsg(null), 5000);
+    refreshGlobalPlan();
+  }, [refreshGlobalPlan]);
 
   /* ── On mount: auth + plan ── */
   useEffect(() => {
@@ -126,116 +183,105 @@ export function BillingPage() {
       setUserId(user.id);
       setUserEmail(user.email ?? null);
 
-      // DB plan state
-      const { data: dbUser } = await supabase
+      const { data } = await supabase
         .from('users')
-        .select('plan_tier, generations_used, generations_limit')
+        .select('plan_tier, generations_used, generations_limit, stripe_customer_id')
         .eq('id', user.id)
         .single();
 
       if (cancelled) return;
 
-      const dbPlan: PlanState = {
-        planTier: dbUser?.plan_tier === 'pro' ? 'pro' : 'free',
-        generationsUsed: dbUser?.generations_used ?? 0,
-        generationsLimit: dbUser?.generations_limit ?? 3,
-      };
+      console.log('[BillingPage] init DB read:', { plan_tier: data?.plan_tier, generations_used: data?.generations_used, generations_limit: data?.generations_limit });
 
-      // Live RC entitlement — source of truth
-      let rcIsPro = false;
-      try {
-        rcIsPro = await getProEntitlement(user.id);
-      } catch (err) {
-        console.warn('[BillingPage] RC entitlement check failed:', err);
+      // Detect pro via either field (self-healing)
+      const hasProLimit = (data?.generations_limit ?? 0) >= 999;
+      const isPro = data?.plan_tier === 'pro' || hasProLimit;
+
+      // Self-heal if generations_limit shows pro but plan_tier doesn't
+      if (hasProLimit && data?.plan_tier !== 'pro') {
+        console.log('[BillingPage] self-healing: generations_limit>=999 but plan_tier is not pro, writing fix');
+        supabase.from('users').update({ plan_tier: 'pro' }).eq('id', user.id);
       }
 
-      if (cancelled) return;
-
-      // User is pro if EITHER source says so
-      const isPro = dbPlan.planTier === 'pro' || rcIsPro;
-
-      // Always set plan to pro if either source confirms it
-      if (isPro) {
-        dbPlan.planTier = 'pro';
-      }
-
-      setRcIsPro(isPro);
-      setPlan(dbPlan);
-
-      // Set activePlanId based on confirmed pro status
+      setPlan({
+        planTier: isPro ? 'pro' : 'free',
+        generationsUsed: data?.generations_used ?? 0,
+        generationsLimit: data?.generations_limit ?? (isPro ? 999 : 3),
+      });
       setActivePlanId(isPro ? 'pro_monthly' : 'free');
-
-      console.log('[BillingPage] DB plan_tier:', dbUser?.plan_tier);
-      console.log('[BillingPage] RC isPro:', rcIsPro);
-      console.log('[BillingPage] final isPro:', isPro);
-      console.log('[BillingPage] activePlanId:', isPro ? 'pro_monthly' : 'free');
-
+      setHasStripeCustomer(!!data?.stripe_customer_id);
       setLoading(false);
+
+      // Check URL params for success/cancel redirect from Stripe
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('success') === 'true') {
+        setSuccessMsg("Payment successful! Your plan is being activated...");
+        pollForProUpgrade(user.id);
+      }
+      if (params.get('cancelled') === 'true') {
+        window.history.replaceState({}, '', '/billing');
+      }
     }
 
     init();
     return () => { cancelled = true; };
-  }, [navigate]);
+  }, [navigate, pollForProUpgrade]);
 
-  /* ── Purchase handler ── */
-  const handlePurchase = useCallback(async (packageId: PackageId) => {
-    if (!userId) return;
-
-    setPurchasingId(packageId);
+  /* ── Upgrade handler (Stripe Checkout redirect) ── */
+  const handleUpgrade = useCallback(async (planId: PlanId) => {
+    setPurchasingId(planId);
     setPurchaseError(null);
-    setSuccessMsg(null);
 
     try {
-      await purchasePackage(userId, packageId, userEmail ?? undefined);
+      const token = await getAuthToken();
+      const priceId = planId === 'pro_monthly'
+        ? STRIPE_PRICE_MONTHLY
+        : STRIPE_PRICE_ANNUAL;
 
-      // 1. Optimistically update DB
-      await supabase
-        .from('users')
-        .update({ plan_tier: 'pro' })
-        .eq('id', userId);
+      const res = await fetch(`${SERVER_URL}/create-checkout-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${publicAnonKey}`,
+          'X-User-Token': token || '',
+        },
+        body: JSON.stringify({ priceId, planId }),
+      });
 
-      // 2. Confirm with RC as source of truth
-      const isPro = await getProEntitlement(userId);
+      const data = await res.json();
+      if (!data.success || !data.url) {
+        throw new Error(data.error || 'Failed to create checkout session');
+      }
 
-      // 3. Update all plan state atomically
-      setRcIsPro(isPro);
-      setActivePlanId(packageId);
-      setPlan(prev => ({ ...prev, planTier: isPro ? 'pro' : prev.planTier }));
-
-      // 4. Show success message for 5 seconds
-      setSuccessMsg("You're now on Pro! \u{1F389}");
-      successTimerRef.current = setTimeout(() => setSuccessMsg(null), 5000);
+      // Redirect to Stripe Checkout
+      window.location.href = data.url;
 
     } catch (err: any) {
-      const msg: string = err?.message ?? '';
-      const wasCancelled =
-        err?.userCancelled === true ||
-        msg.includes('PURCHASE_CANCELLED') ||
-        msg.includes('USER_CANCELLED') ||
-        msg.toLowerCase().includes('cancel') ||
-        err?.code === 'PURCHASE_CANCELLED';
-
-      if (!wasCancelled) {
-        setPurchaseError(msg || 'Payment failed. Please try again.');
-      }
-      // If cancelled: silently reset, no error shown
-    } finally {
+      setPurchaseError(err.message || 'Something went wrong. Please try again.');
       setPurchasingId(null);
     }
-  }, [userId, userEmail]);
+    // Note: don't reset purchasingId on success — page will redirect
+  }, []);
 
-  /* ── Manage subscription ── */
+  /* ── Manage subscription (Stripe Customer Portal) ── */
   const handleManage = useCallback(async () => {
-    if (!userId) return;
     try {
-      const url = await getManagementURL(userId);
-      if (url) {
-        window.open(url, '_blank', 'noopener,noreferrer');
+      const token = await getAuthToken();
+      const res = await fetch(`${SERVER_URL}/create-portal-session`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${publicAnonKey}`,
+          'X-User-Token': token || '',
+        },
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.open(data.url, '_blank', 'noopener,noreferrer');
       }
     } catch (err) {
-      console.error('[BillingPage] getManagementURL error:', err);
+      console.error('Portal error:', err);
     }
-  }, [userId]);
+  }, []);
 
   /* ── Cleanup ── */
   useEffect(() => () => {
@@ -249,7 +295,7 @@ export function BillingPage() {
   const surfaceBg = isDark ? '#1E293B' : '#FFFFFF';
   const surfaceElevated = isDark ? '#263348' : '#F8FAFC';
 
-  const isPro = plan.planTier === 'pro' || rcIsPro;
+  const isPro = plan.planTier === 'pro';
   const usageRatio = Math.min(plan.generationsUsed / plan.generationsLimit, 1);
 
   return (
@@ -451,7 +497,7 @@ export function BillingPage() {
             ctaLabel={isPro ? undefined : 'Upgrade'}
             ctaDisabled={isPro}
             purchasing={purchasingId === 'pro_monthly'}
-            onPurchase={() => handlePurchase('pro_monthly')}
+            onPurchase={() => handleUpgrade('pro_monthly')}
             purchaseError={purchasingId === null && purchaseError ? purchaseError : undefined}
           />
 
@@ -470,7 +516,7 @@ export function BillingPage() {
             ctaLabel={isPro ? undefined : 'Upgrade'}
             ctaDisabled={isPro}
             purchasing={purchasingId === 'pro_annual'}
-            onPurchase={() => handlePurchase('pro_annual')}
+            onPurchase={() => handleUpgrade('pro_annual')}
             purchaseError={purchasingId === null && purchaseError ? purchaseError : undefined}
           />
         </div>
@@ -480,7 +526,7 @@ export function BillingPage() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 4 }}>
             <Lock size={14} color={secondaryText} />
             <span style={{ fontSize: 13, fontWeight: 400, fontFamily: 'Inter, sans-serif', color: secondaryText }}>
-              Payments processed securely by RevenueCat &amp; Stripe
+              Payments processed securely by Stripe
             </span>
           </div>
           <span style={{ fontSize: 12, fontWeight: 400, fontFamily: 'Inter, sans-serif', color: isDark ? '#475569' : '#94A3B8' }}>
@@ -631,7 +677,7 @@ function PlanCompareCard({
             }}
           >
             {purchasing ? (
-              <><Loader2 size={15} style={{ animation: 'billSpin 0.75s linear infinite' }} /> Processing...</>
+              <><Loader2 size={15} style={{ animation: 'billSpin 0.75s linear infinite' }} /> Redirecting...</>
             ) : (
               <>{ctaLabel} {!ctaDisabled && <ChevronRight size={14} />}</>
             )}

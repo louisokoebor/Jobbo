@@ -1,5 +1,5 @@
 // pdf-generator.js
-// Browser-side PDF generation for Jobbo
+// Browser-side PDF generation for Applyly
 // Drop this into your Figma Make project as a utility/helper
 // No API keys, no Edge Function needed — runs entirely in the browser
 //
@@ -315,7 +315,7 @@ function buildCoverLetterTemplate(content, name) {
 
 const PDF_OPTIONS = {
   margin: 0,
-  filename: "jobbo-cv.pdf",
+  filename: "applyly-cv.pdf",
   image: { type: "jpeg", quality: 0.98 },
   html2canvas: {
     scale: 2,           // High DPI for crisp text

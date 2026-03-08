@@ -1,10 +1,10 @@
 Fix the package lookup in src/app/lib/revenueCatClient.ts to match 
 the exact RevenueCat dashboard configuration.
 
-The offering identifier is: jobbo-offerings
+The offering identifier is: applyly-offerings
 The packages are:
-  - Package identifier: $rc_annual  → Product: jobbo_pro_annual
-  - Package identifier: $rc_monthly → Product: jobbo_pro_monthly
+  - Package identifier: $rc_annual  → Product: applyly_pro_annual
+  - Package identifier: $rc_monthly → Product: applyly_pro_monthly
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CHANGE 1 — fetch the correct offering by identifier
@@ -14,9 +14,9 @@ In purchasePackage(), replace the offerings fetch with:
 
   const offeringsResult = await rc.getOfferings();
   
-  // Use the specific jobbo-offerings, fall back to current
+  // Use the specific applyly-offerings, fall back to current
   const offering = 
-    offeringsResult.all['jobbo-offerings'] ?? 
+    offeringsResult.all['applyly-offerings'] ?? 
     offeringsResult.current;
 
   if (!offering) {
@@ -40,8 +40,8 @@ Replace the package lookup logic with this exact mapping:
 
   // Map our internal IDs to RC package identifiers
   const packageIdentifierMap: Record<PackageId, string[]> = {
-    pro_monthly: ['$rc_monthly', 'pro_monthly', 'jobbo_pro_monthly'],
-    pro_annual:  ['$rc_annual',  'pro_annual',  'jobbo_pro_annual'],
+    pro_monthly: ['$rc_monthly', 'pro_monthly', 'applyly_pro_monthly'],
+    pro_annual:  ['$rc_annual',  'pro_annual',  'applyly_pro_annual'],
   };
 
   const candidateIds = packageIdentifierMap[packageId];
@@ -68,10 +68,10 @@ Replace the package lookup logic with this exact mapping:
 CHANGE 3 — also update getOfferings() helper
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Update the existing getOfferings() function to also prefer jobbo-offerings:
+Update the existing getOfferings() function to also prefer applyly-offerings:
 
   export async function getOfferings(userId: string) {
     const rc = getRCInstance(userId);
     const result = await rc.getOfferings();
-    return result.all['jobbo-offerings'] ?? result.current;
+    return result.all['applyly-offerings'] ?? result.current;
   }

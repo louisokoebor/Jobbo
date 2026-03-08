@@ -1,5 +1,4 @@
 import { supabase } from './supabaseClient';
-import { getProEntitlement } from './revenueCatClient';
 
 export type PlanTier = 'free' | 'pro';
 
@@ -7,13 +6,13 @@ export interface ResolvedPlan {
   planTier: PlanTier;
   generationsUsed: number;
   generationsLimit: number;
+  generationsRemaining: number;
   dbPlanTier: PlanTier;
-  rcIsPro: boolean;
 }
 
 /**
- * Resolve the user's effective plan with Supabase DB as primary source of truth.
- * If DB says pro, user is pro regardless of RevenueCat entitlement state.
+ * Resolve the user's effective plan using Supabase DB as the single source of truth.
+ * Stripe webhook keeps the DB plan_tier in sync with subscription status.
  */
 export async function resolveUserPlan(userId: string): Promise<ResolvedPlan> {
   const { data: dbUser, error: dbError } = await supabase
@@ -28,20 +27,29 @@ export async function resolveUserPlan(userId: string): Promise<ResolvedPlan> {
 
   const dbPlanTier: PlanTier = dbUser?.plan_tier === 'pro' ? 'pro' : 'free';
 
-  let rcIsPro = false;
-  try {
-    rcIsPro = await getProEntitlement(userId);
-  } catch (err) {
-    console.warn('[PlanResolver] RC entitlement check failed:', err);
+  console.log('[PlanResolver] DB row:', { plan_tier: dbUser?.plan_tier, generations_used: dbUser?.generations_used, generations_limit: dbUser?.generations_limit });
+
+  // Self-heal: if generations_limit is pro-level but plan_tier wasn't written
+  if (dbPlanTier === 'free' && (dbUser?.generations_limit ?? 0) >= 999) {
+    console.log('[PlanResolver] self-healing: generations_limit>=999 but plan_tier=free, returning pro and writing fix');
+    supabase.from('users').update({ plan_tier: 'pro' }).eq('id', userId).then(({ error }) => {
+      if (error) console.warn('[PlanResolver] self-heal write failed:', error.message);
+      else console.log('[PlanResolver] self-heal write succeeded: plan_tier set to pro');
+    });
+    return {
+      planTier: 'pro' as PlanTier,
+      dbPlanTier: 'pro' as PlanTier,
+      generationsUsed: dbUser?.generations_used ?? 0,
+      generationsLimit: dbUser?.generations_limit ?? 999,
+      generationsRemaining: Math.max(0, (dbUser?.generations_limit ?? 999) - (dbUser?.generations_used ?? 0)),
+    };
   }
 
-  const planTier: PlanTier = dbPlanTier === 'pro' || rcIsPro ? 'pro' : 'free';
-
   return {
-    planTier,
+    planTier: dbPlanTier,
     dbPlanTier,
-    rcIsPro,
     generationsUsed: dbUser?.generations_used ?? 0,
-    generationsLimit: dbUser?.generations_limit ?? (planTier === 'pro' ? 999 : 3),
+    generationsLimit: dbUser?.generations_limit ?? (dbPlanTier === 'pro' ? 999 : 3),
+    generationsRemaining: Math.max(0, (dbUser?.generations_limit ?? (dbPlanTier === 'pro' ? 999 : 3)) - (dbUser?.generations_used ?? 0)),
   };
 }

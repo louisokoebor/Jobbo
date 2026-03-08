@@ -1,11 +1,11 @@
-# Jobbo — Figma Make Guidelines
+# Applyly — Figma Make Guidelines
 **Version 1.0 · Confidential**
 
 ---
 
 ## 1. Project Overview
 
-**Jobbo** is a dark-first, glassmorphic SaaS product for AI-powered CV tailoring and job application management. Every screen must feel polished, spacious, and modern — comparable to Linear, Vercel, or Raycast in visual quality.
+**Applyly** is a dark-first, glassmorphic SaaS product for AI-powered CV tailoring and job application management. Every screen must feel polished, spacious, and modern — comparable to Linear, Vercel, or Raycast in visual quality.
 
 All UI is built in **Figma Make**. Do not produce raw code files or manual editing instructions. Every response that touches UI must be a ready-to-paste Figma Make prompt.
 
@@ -16,7 +16,7 @@ All UI is built in **Figma Make**. Do not produce raw code files or manual editi
 ### 2.1 Modes
 - **Two modes:** Dark (default) and Light
 - **Default on load:** Dark mode
-- **Persistence:** Save user preference to `localStorage` key `jobbo-theme`
+- **Persistence:** Save user preference to `localStorage` key `applyly-theme`
 - **Switching:** Sun/moon icon button in the nav bar, top-right
 - **Transition:** All colour changes animate with `transition: background 0.2s, color 0.2s, border-color 0.2s`
 - **Implementation:** Use CSS custom properties (`var(--token-name)`) for every colour so the theme switches globally by toggling a class on `<html>` or `<body>`
@@ -108,7 +108,7 @@ All type uses **Inter** (import from Google Fonts).
 
 ## 5. Glass Effect Rules
 
-Glass is a **core visual motif** in Jobbo. Apply it correctly:
+Glass is a **core visual motif** in Applyly. Apply it correctly:
 
 ### When to Use Glass
 - Nav bar (always, both modes, sticky)
@@ -255,7 +255,7 @@ Glass treatment. Contents:
 
 ## 8. Screen Inventory
 
-The following screens exist in Jobbo. Each must be built as a separate Figma Make prompt:
+The following screens exist in Applyly. Each must be built as a separate Figma Make prompt:
 
 | # | Screen | Phase |
 |---|---|---|
@@ -366,7 +366,7 @@ All templates: white background, black text, text-selectable PDF output, no imag
 When building a screen, structure the prompt as:
 
 ```
-Build [Screen Name] for Jobbo, an AI-powered CV tailoring SaaS.
+Build [Screen Name] for Applyly, an AI-powered CV tailoring SaaS.
 
 THEME: Dark mode by default. Use CSS custom properties. Include a theme toggle in the nav.
 

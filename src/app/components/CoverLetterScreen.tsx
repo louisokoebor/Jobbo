@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router';
+import { useNavigation } from '../lib/NavigationContext';
 import {
   Loader2, CheckCircle2, AlertCircle, FileText, Download,
   RefreshCw, Check, Lock, Sparkles, ArrowLeft, ArrowRight,
@@ -16,7 +17,7 @@ import {
 import { SharedNavbar } from './SharedNavbar';
 import { useUserPlan } from '../lib/UserPlanContext';
 import { supabase } from '../lib/supabaseClient';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { projectId, publicAnonKey } from '../lib/supabaseClient';
 
 // @ts-ignore — JS utility
 import { downloadCoverLetterPdf } from '../lib/pdf-generator.js';
@@ -288,16 +289,17 @@ function LivePreview({ content, candidateName, isDark }: { content: string; cand
 /* ─── Main Screen ────────────────────────────────────────────── */
 export function CoverLetterScreen() {
   const navigate = useNavigate();
+  const { goBack } = useNavigation();
   const { applicationId, generatedCvId } = useParams<{ applicationId: string; generatedCvId: string }>();
 
   const [theme, setTheme] = useState<Theme>(() =>
-    (typeof window !== 'undefined' && (localStorage.getItem('jobbo-theme') as Theme)) || 'dark'
+    (typeof window !== 'undefined' && (localStorage.getItem('applyly-theme') as Theme)) || 'light'
   );
   const isDark = theme === 'dark';
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('jobbo-theme', theme);
+    localStorage.setItem('applyly-theme', theme);
   }, [theme]);
 
   const { isFreeTier } = useUserPlan();
@@ -868,7 +870,7 @@ export function CoverLetterScreen() {
               variant="ghost"
               isDark={isDark}
               icon={<ArrowLeft size={14} />}
-              onClick={() => navigate(generatedCvId ? `/cv-editor/${generatedCvId}${applicationId ? `?appId=${applicationId}` : ''}` : '/dashboard')}
+              onClick={() => goBack(navigate, applicationId ? `/applications/${applicationId}` : '/dashboard')}
             >
               Back to CV
             </HoverButton>

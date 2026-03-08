@@ -1,4 +1,4 @@
-Build the Application Detail Panel for Jobbo — an AI-powered CV tailoring SaaS. This is a side drawer on desktop, full page on mobile.
+Build the Application Detail Panel for Applyly — an AI-powered CV tailoring SaaS. This is a side drawer on desktop, full page on mobile.
 
 THEME
 Same dark/light system. Drawer itself uses glass treatment layered over the blurred dashboard behind it.

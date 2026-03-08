@@ -1,10 +1,10 @@
 /**
- * LoginScreen.tsx — Jobbo
+ * LoginScreen.tsx — Applyly
  *
  * PROTECTED ROUTE NOTES:
  * - After logout or session expiry, middleware redirects any /dashboard (or other
  *   protected route) attempt here, storing the originally requested URL in
- *   sessionStorage key "jobbo-redirect-after-login".
+ *   sessionStorage key "applyly-redirect-after-login".
  * - On successful login this screen reads that key, clears it, and navigates to
  *   the stored URL (falling back to /dashboard).
  * - A session check (e.g. Supabase getSession) should run on mount; if a valid
@@ -430,16 +430,16 @@ export function LoginScreen() {
   /* Theme */
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window !== 'undefined') {
-      return (localStorage.getItem('jobbo-theme') as Theme) || 'dark';
+      return (localStorage.getItem('applyly-theme') as Theme) || 'light';
     }
-    return 'dark';
+    return 'light';
   });
 
   const isDark = theme === 'dark';
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('jobbo-theme', theme);
+    localStorage.setItem('applyly-theme', theme);
   }, [theme]);
 
   const toggleTheme = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'));
@@ -514,8 +514,8 @@ export function LoginScreen() {
         return;
       }
 
-      const redirect = sessionStorage.getItem('jobbo-redirect-after-login') || '/dashboard';
-      sessionStorage.removeItem('jobbo-redirect-after-login');
+      const redirect = sessionStorage.getItem('applyly-redirect-after-login') || '/dashboard';
+      sessionStorage.removeItem('applyly-redirect-after-login');
       navigate(redirect);
     } finally {
       setLoginLoading(false);
@@ -617,7 +617,7 @@ export function LoginScreen() {
             lineHeight: 1,
           }}
         >
-          Jobbo
+          Applyly
         </button>
         <ThemeToggleButton isDark={isDark} onToggle={toggleTheme} />
       </nav>
@@ -678,7 +678,7 @@ export function LoginScreen() {
                     lineHeight: 1.5,
                   }}
                 >
-                  Sign in to your Jobbo account
+                  Sign in to your Applyly account
                 </p>
               </div>
 

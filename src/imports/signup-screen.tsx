@@ -1,7 +1,7 @@
-Build the Sign Up screen for Jobbo — an AI-powered CV tailoring SaaS for job seekers.
+Build the Sign Up screen for Applyly — an AI-powered CV tailoring SaaS for job seekers.
 
 THEME
-Dark mode default. Light mode support via CSS custom properties toggled by a class on <html>. Theme toggle (sun/moon icon) in top-right of nav. Save preference to localStorage key: jobbo-theme. All colour changes transition: background 0.2s, color 0.2s, border-color 0.2s.
+Dark mode default. Light mode support via CSS custom properties toggled by a class on <html>. Theme toggle (sun/moon icon) in top-right of nav. Save preference to localStorage key: applyly-theme. All colour changes transition: background 0.2s, color 0.2s, border-color 0.2s.
 
 DESIGN SYSTEM
 Font: Inter (all weights via Google Fonts)
@@ -16,7 +16,7 @@ Full viewport. Background is a deep radial gradient: dark mode centre #1E293B ra
 
 NAV BAR
 Sticky top, glass treatment, height 60px, padding 0 24px.
-Left: Jobbo wordmark in Inter 700, brand blue #1A56DB, font-size 20px.
+Left: Applyly wordmark in Inter 700, brand blue #1A56DB, font-size 20px.
 Right: Theme toggle icon button (sun in light mode, moon in dark mode), no border, ghost style.
 
 SIGN UP CARD (glass)

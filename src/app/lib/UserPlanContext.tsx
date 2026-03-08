@@ -1,8 +1,8 @@
 /**
  * UserPlanContext — Shared subscription / plan tier state
  *
- * Uses RevenueCat as the source of truth for entitlements.
- * Falls back to Supabase users.plan_tier if RC is unavailable.
+ * Uses Supabase DB as the single source of truth for plan status.
+ * Stripe webhook keeps the DB in sync with subscription changes.
  */
 
 import {
@@ -15,11 +15,6 @@ import {
   type ReactNode,
 } from 'react';
 import { supabase } from './supabaseClient';
-import {
-  teardownRC,
-  getCustomerInfo,
-  type RCCustomerInfo,
-} from './revenueCatClient';
 import { resolveUserPlan } from './planResolver';
 
 /* ─── Types ──────────────────────────────────────────────────── */
@@ -31,7 +26,9 @@ interface UserPlanState {
   isFreeTier: boolean;
   isProTier: boolean;
   userId: string | null;
-  rcCustomerInfo: RCCustomerInfo | null;
+  generationsUsed: number;
+  generationsLimit: number;
+  generationsRemaining: number;
   refresh: () => Promise<void>;
 }
 
@@ -41,7 +38,9 @@ const defaultState: UserPlanState = {
   isFreeTier: true,
   isProTier: false,
   userId: null,
-  rcCustomerInfo: null,
+  generationsUsed: 0,
+  generationsLimit: 3,
+  generationsRemaining: 3,
   refresh: async () => {},
 };
 
@@ -52,7 +51,9 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
   const [planTier, setPlanTier] = useState<PlanTier>('free');
   const [isLoading, setIsLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
-  const [rcCustomerInfo, setRcCustomerInfo] = useState<RCCustomerInfo | null>(null);
+  const [generationsUsed, setGenerationsUsed] = useState(0);
+  const [generationsLimit, setGenerationsLimit] = useState(3);
+  const [generationsRemaining, setGenerationsRemaining] = useState(3);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchPlanTier = useCallback(async () => {
@@ -64,24 +65,18 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
       if (!user) {
         setPlanTier('free');
         setUserId(null);
-        setRcCustomerInfo(null);
         setIsLoading(false);
-        teardownRC();
         return;
       }
 
       setUserId(user.id);
 
-     const resolvedPlan = await resolveUserPlan(user.id);
+      const resolvedPlan = await resolveUserPlan(user.id);
+      console.log('[UserPlanContext] fetched plan:', resolvedPlan.planTier, 'dbPlanTier:', resolvedPlan.dbPlanTier);
       setPlanTier(resolvedPlan.planTier);
-
-      try {
-        const info = await getCustomerInfo(user.id);
-        setRcCustomerInfo(info);
-      } catch (rcErr) {
-           console.warn('UserPlanContext: Failed to fetch RevenueCat customer info:', rcErr);
-        setRcCustomerInfo(null);
-      }
+      setGenerationsUsed(resolvedPlan.generationsUsed);
+      setGenerationsLimit(resolvedPlan.generationsLimit);
+      setGenerationsRemaining(resolvedPlan.generationsRemaining);
     } catch (err) {
       console.error('UserPlanContext: Unexpected error:', err);
       setPlanTier('free');
@@ -113,9 +108,7 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
       } else if (event === 'SIGNED_OUT') {
         setPlanTier('free');
         setUserId(null);
-        setRcCustomerInfo(null);
         setIsLoading(false);
-        teardownRC();
       }
     });
 
@@ -131,7 +124,9 @@ export function UserPlanProvider({ children }: { children: ReactNode }) {
     isFreeTier: planTier === 'free',
     isProTier: planTier === 'pro',
     userId,
-    rcCustomerInfo,
+    generationsUsed,
+    generationsLimit,
+    generationsRemaining,
     refresh: fetchPlanTier,
   };
 

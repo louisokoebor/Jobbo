@@ -1,4 +1,4 @@
-Build the New Application screen for Jobbo — an AI-powered CV tailoring SaaS.
+Build the New Application screen for Applyly — an AI-powered CV tailoring SaaS.
 
 THEME
 Same dark/light system, same tokens, same nav shell as Dashboard.

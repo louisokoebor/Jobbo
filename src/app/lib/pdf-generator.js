@@ -1,5 +1,5 @@
 // pdf-generator.js
-// Browser-side PDF generation for Jobbo
+// Browser-side PDF generation for Applyly
 // Dynamically loads html2pdf.js from CDN on first use — no script tag needed.
 
 // ── CDN LOADER ────────────────────────────────────────────────────────────────
@@ -362,7 +362,7 @@ function purgeOklchFromDocument(doc) {
 
 const PDF_OPTIONS = {
   margin: 0,
-  filename: 'jobbo-cv.pdf',
+  filename: 'applyly-cv.pdf',
   image: { type: 'jpeg', quality: 0.98 },
   html2canvas: {
     scale: 2,

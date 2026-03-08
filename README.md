@@ -1,7 +1,7 @@
 
-  # Jobbo
+  # Applyly
 
-  This is a code bundle for Jobbo. The original project is available at https://www.figma.com/design/oIs15pcJfWGvjyhG4jjXmQ/Jobbo.
+  This is a code bundle for Applyly. The original project is available at https://www.figma.com/design/oIs15pcJfWGvjyhG4jjXmQ/Applyly.
 
   ## Running the code
 

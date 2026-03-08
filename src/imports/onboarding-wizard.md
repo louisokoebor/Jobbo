@@ -1,4 +1,4 @@
-Build the 3-step Onboarding Wizard for Jobbo — an AI-powered CV tailoring SaaS.
+Build the 3-step Onboarding Wizard for Applyly — an AI-powered CV tailoring SaaS.
 
 THEME
 Same dark/light mode system. Same tokens, same nav. Background: same deep gradient with texture.
@@ -7,7 +7,7 @@ DESIGN SYSTEM
 Same as auth screens. Inter font, all same tokens.
 
 LAYOUT
-Full viewport. Nav at top (glass, Jobbo wordmark, theme toggle, no other nav links since user is mid-onboarding). Below nav: centred content column, max-width 560px, padding top 48px.
+Full viewport. Nav at top (glass, Applyly wordmark, theme toggle, no other nav links since user is mid-onboarding). Below nav: centred content column, max-width 560px, padding top 48px.
 
 PROGRESS INDICATOR
 Horizontal stepper at top of content area. 3 steps connected by a line.

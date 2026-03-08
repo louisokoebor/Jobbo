@@ -283,7 +283,7 @@ export function SharedNavbar({
           marginRight: 32, flexShrink: 0, cursor: 'pointer',
         }}
       >
-        Jobbo
+        Applyly
       </span>
 
       {/* Desktop nav links */}

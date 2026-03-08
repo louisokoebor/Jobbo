@@ -2,23 +2,21 @@
  * PdfPreviewModal — Screen 8: PDF Preview Modal
  *
  * Full-viewport glassmorphic overlay on the CV Editor.
- * Top toolbar: title, template thumbnails, zoom controls, download, close.
- * Centre: scrollable A4 document viewer.
- * Free-tier lock on Sidebar & Minimal templates.
+ * Top toolbar: title, zoom controls, download, close.
+ * Centre: scrollable A4 document viewer (Clean template only).
  * Keyboard: Escape closes, Cmd/Ctrl+S triggers download.
+ * Responsive: full-screen on mobile, scaled document.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  X, Minus, Plus, Download, Loader2, CheckCircle2, Lock,
+  X, Download, Loader2, CheckCircle2,
   ZoomIn, ZoomOut, Move,
 } from 'lucide-react';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
+import { supabase } from '../lib/supabaseClient';
+import { projectId, publicAnonKey } from '../lib/supabaseClient';
 
 /* ─── Types (mirrored from CvEditorScreen) ─────────────────── */
-type TemplateId = 'clean' | 'sidebar' | 'minimal';
-
 interface PersonalDetails {
   fullName: string;
   email: string;
@@ -79,8 +77,6 @@ interface PdfPreviewModalProps {
   isOpen: boolean;
   onClose: () => void;
   cv: CvData;
-  selectedTemplate: TemplateId;
-  onTemplateChange: (t: TemplateId) => void;
   isDark: boolean;
   jobTitle: string;
   company: string;
@@ -92,270 +88,27 @@ const A4_WIDTH = 794;
 const A4_HEIGHT = 1123;
 
 const ZOOM_STEPS = [50, 75, 100, 125, 150];
+const MOBILE_BREAKPOINT = 768;
 
-/* ─── Template Thumbnails ────────────────────────────────────── */
-function TemplateThumbnail({ id, label, isActive, isLocked, isDark, onClick }: {
-  id: TemplateId; label: string; isActive: boolean; isLocked: boolean;
-  isDark: boolean; onClick: () => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const [showTooltip, setShowTooltip] = useState(false);
-
-  const handleClick = () => {
-    if (isLocked) {
-      setShowTooltip(true);
-      setTimeout(() => setShowTooltip(false), 3000);
-      return;
-    }
-    onClick();
-  };
-
-  /* Mini geometric representation of each template */
-  const renderMiniLayout = () => {
-    const lineColor = isActive ? '#1A56DB' : isDark ? '#94A3B8' : '#64748B';
-    const opacity = isLocked ? 0.4 : 0.7;
-
-    if (id === 'clean') {
-      return (
-        <svg width="80" height="28" viewBox="0 0 80 28" style={{ opacity }}>
-          <rect x="4" y="3" width="72" height="3" rx="1" fill={lineColor} opacity={0.8} />
-          <rect x="4" y="9" width="50" height="2" rx="0.5" fill={lineColor} opacity={0.5} />
-          <rect x="4" y="14" width="72" height="2" rx="0.5" fill={lineColor} opacity={0.35} />
-          <rect x="4" y="18" width="72" height="2" rx="0.5" fill={lineColor} opacity={0.35} />
-          <rect x="4" y="22" width="60" height="2" rx="0.5" fill={lineColor} opacity={0.35} />
-        </svg>
-      );
-    }
-    if (id === 'sidebar') {
-      return (
-        <svg width="80" height="28" viewBox="0 0 80 28" style={{ opacity }}>
-          <rect x="2" y="2" width="22" height="24" rx="1.5" fill={lineColor} opacity={0.25} />
-          <rect x="5" y="5" width="16" height="2" rx="0.5" fill={lineColor} opacity={0.6} />
-          <rect x="5" y="10" width="12" height="1.5" rx="0.5" fill={lineColor} opacity={0.4} />
-          <rect x="5" y="13" width="14" height="1.5" rx="0.5" fill={lineColor} opacity={0.4} />
-          <rect x="5" y="16" width="10" height="1.5" rx="0.5" fill={lineColor} opacity={0.4} />
-          <rect x="28" y="3" width="48" height="2.5" rx="0.5" fill={lineColor} opacity={0.7} />
-          <rect x="28" y="8" width="35" height="1.5" rx="0.5" fill={lineColor} opacity={0.4} />
-          <rect x="28" y="12" width="48" height="1.5" rx="0.5" fill={lineColor} opacity={0.3} />
-          <rect x="28" y="16" width="48" height="1.5" rx="0.5" fill={lineColor} opacity={0.3} />
-          <rect x="28" y="20" width="40" height="1.5" rx="0.5" fill={lineColor} opacity={0.3} />
-        </svg>
-      );
-    }
-    // minimal
-    return (
-      <svg width="80" height="28" viewBox="0 0 80 28" style={{ opacity }}>
-        <rect x="20" y="3" width="40" height="2.5" rx="0.5" fill={lineColor} opacity={0.7} />
-        <rect x="25" y="8" width="30" height="1.5" rx="0.5" fill={lineColor} opacity={0.4} />
-        <line x1="8" y1="12" x2="72" y2="12" stroke={lineColor} strokeWidth="0.5" opacity={0.3} />
-        <rect x="4" y="15" width="72" height="1.5" rx="0.5" fill={lineColor} opacity={0.3} />
-        <rect x="4" y="19" width="72" height="1.5" rx="0.5" fill={lineColor} opacity={0.3} />
-        <rect x="4" y="23" width="55" height="1.5" rx="0.5" fill={lineColor} opacity={0.3} />
-      </svg>
-    );
-  };
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <button
-        onClick={handleClick}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => { setHovered(false); setShowTooltip(false); }}
-        aria-label={`${label} template${isLocked ? ' (Pro only)' : ''}`}
-        style={{
-          width: 100, height: 40, padding: 0,
-          background: isDark
-            ? (isActive ? 'rgba(26,86,219,0.12)' : hovered ? 'rgba(148,163,184,0.08)' : 'rgba(148,163,184,0.05)')
-            : (isActive ? 'rgba(26,86,219,0.08)' : hovered ? 'rgba(15,23,42,0.04)' : 'rgba(15,23,42,0.02)'),
-          border: isActive
-            ? '2px solid #1A56DB'
-            : `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)'}`,
-          borderRadius: 6, cursor: isLocked ? 'not-allowed' : 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          position: 'relative', overflow: 'hidden',
-          transition: 'border-color 0.15s, background 0.15s',
-        }}
-      >
-        {renderMiniLayout()}
-        {isLocked && (
-          <div style={{
-            position: 'absolute', inset: 0,
-            background: isDark ? 'rgba(15,23,42,0.5)' : 'rgba(241,245,249,0.5)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <Lock size={14} color={isDark ? '#94A3B8' : '#64748B'} />
-          </div>
-        )}
-      </button>
-      {/* Label below */}
-      <div style={{
-        textAlign: 'center', fontSize: 10, fontWeight: 500, fontFamily: font,
-        color: isActive ? '#1A56DB' : isDark ? '#94A3B8' : '#64748B',
-        marginTop: 3, lineHeight: 1,
-      }}>
-        {label}
-      </div>
-      {/* Locked tooltip */}
-      {showTooltip && isLocked && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 16px)', left: '50%', transform: 'translateX(-50%)',
-          width: 220, padding: '8px 12px', borderRadius: 8,
-          background: isDark ? 'rgba(15,23,42,0.95)' : 'rgba(248,250,252,0.97)',
-          backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
-          border: `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)'}`,
-          boxShadow: isDark ? '0 8px 32px rgba(0,0,0,0.5)' : '0 8px 32px rgba(15,23,42,0.12)',
-          zIndex: 300, fontSize: 12, fontFamily: font, lineHeight: 1.5,
-          color: isDark ? '#F8FAFC' : '#0F172A',
-          animation: 'pdf-tooltip-in 0.15s ease-out',
-        }}>
-          Available on Pro{' '}
-          <span style={{ color: '#1A56DB', fontWeight: 600, cursor: 'pointer' }}>
-            Upgrade to unlock all templates
-          </span>
-        </div>
-      )}
-    </div>
+/* ─── Hook: responsive isMobile ──────────────────────────────── */
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < MOBILE_BREAKPOINT : false
   );
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
 }
 
-/* ─── CV Document Renderer (same as LivePreviewDocument) ────── */
-function CvDocument({ cv, template }: { cv: CvData; template: TemplateId }) {
+/* ─── CV Document Renderer (Clean template) ───────────────────── */
+function CvDocument({ cv }: { cv: CvData }) {
   const allSkills = cv.skills.map(s => s.name);
 
-  if (template === 'sidebar') {
-    return (
-      <div style={{
-        width: A4_WIDTH, minHeight: A4_HEIGHT, background: '#FFFFFF',
-        fontFamily: 'Inter, sans-serif', display: 'flex', flexDirection: 'row',
-      }}>
-        {/* Sidebar */}
-        <div style={{
-          width: '30%', background: '#0F172A', color: '#F8FAFC', padding: 28,
-          display: 'flex', flexDirection: 'column', gap: 20,
-        }}>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.3, marginBottom: 4 }}>{cv.personal.fullName}</div>
-            <div style={{ fontSize: 10, color: '#94A3B8', lineHeight: 1.5 }}>
-              {cv.personal.email}<br />
-              {cv.personal.phone}<br />
-              {cv.personal.location}
-            </div>
-            {cv.personal.linkedin && <div style={{ fontSize: 10, color: '#3B82F6', marginTop: 4 }}>{cv.personal.linkedin}</div>}
-            {cv.personal.portfolio && <div style={{ fontSize: 10, color: '#3B82F6' }}>{cv.personal.portfolio}</div>}
-          </div>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, borderBottom: '1px solid rgba(148,163,184,0.3)', paddingBottom: 4 }}>Skills</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {allSkills.map(s => (
-                <span key={s} style={{ fontSize: 10, lineHeight: 1.4 }}>{s}</span>
-              ))}
-            </div>
-          </div>
-          {cv.showCertifications && cv.certifications.length > 0 && (
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, borderBottom: '1px solid rgba(148,163,184,0.3)', paddingBottom: 4 }}>Certifications</div>
-              {cv.certifications.map(c => (
-                <span key={c.id} style={{ fontSize: 10, lineHeight: 1.5, display: 'block' }}>{c.label}</span>
-              ))}
-            </div>
-          )}
-        </div>
-        {/* Main */}
-        <div style={{ width: '70%', padding: 28 }}>
-          {cv.summary && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid #E2E8F0', paddingBottom: 4, marginBottom: 6 }}>Professional Summary</div>
-              <p style={{ fontSize: 11, color: '#374151', lineHeight: 1.5, margin: 0 }}>{cv.summary}</p>
-            </div>
-          )}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid #E2E8F0', paddingBottom: 4, marginBottom: 6 }}>Work Experience</div>
-            {cv.workHistory.map(w => (
-              <div key={w.id} style={{ marginBottom: 12 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#0F172A' }}>{w.title}</span>
-                  <span style={{ fontSize: 10, color: '#64748B' }}>{w.startDate} – {w.endDate}</span>
-                </div>
-                <div style={{ fontSize: 11, fontStyle: 'italic', color: '#64748B', marginBottom: 4 }}>{w.company}</div>
-                <ul style={{ margin: 0, paddingLeft: 14 }}>
-                  {w.bullets.filter(b => b.text).map(b => (
-                    <li key={b.id} style={{ fontSize: 11, color: '#374151', lineHeight: 1.5, listStyleType: 'disc' }}>{b.text}</li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid #E2E8F0', paddingBottom: 4, marginBottom: 6 }}>Education</div>
-            {cv.education.map(e => (
-              <div key={e.id} style={{ marginBottom: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#0F172A' }}>{e.qualification}</span>
-                  <span style={{ fontSize: 10, color: '#64748B' }}>{e.dates}</span>
-                </div>
-                <div style={{ fontSize: 11, color: '#64748B' }}>{e.institution}{e.grade ? ` · ${e.grade}` : ''}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (template === 'minimal') {
-    return (
-      <div style={{ width: A4_WIDTH, minHeight: A4_HEIGHT, background: '#FFFFFF', padding: 36, fontFamily: 'Inter, sans-serif' }}>
-        <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.01em' }}>{cv.personal.fullName}</div>
-          <div style={{ fontSize: 11, color: '#64748B', marginTop: 4, display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
-            {[cv.personal.email, cv.personal.phone, cv.personal.location].filter(Boolean).map((item, i) => (
-              <span key={i}>{i > 0 && <span style={{ margin: '0 4px', color: '#CBD5E1' }}>|</span>}{item}</span>
-            ))}
-          </div>
-        </div>
-        <div style={{ height: 1, background: '#E2E8F0', margin: '0 0 16px' }} />
-        {cv.summary && (
-          <>
-            <p style={{ fontSize: 11, color: '#374151', lineHeight: 1.6, margin: '0 0 16px' }}>{cv.summary}</p>
-            <div style={{ height: 1, background: '#E2E8F0', margin: '0 0 16px' }} />
-          </>
-        )}
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Skills</div>
-        <p style={{ fontSize: 11, color: '#374151', lineHeight: 1.5, margin: '0 0 16px' }}>{allSkills.join(' · ')}</p>
-        <div style={{ height: 1, background: '#E2E8F0', margin: '0 0 16px' }} />
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Experience</div>
-        {cv.workHistory.map(w => (
-          <div key={w.id} style={{ marginBottom: 14 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A' }}>{w.title}</span>
-              <span style={{ fontSize: 10, color: '#64748B' }}>{w.startDate} – {w.endDate}</span>
-            </div>
-            <div style={{ fontSize: 11, color: '#64748B', marginBottom: 4 }}>{w.company}</div>
-            {w.bullets.filter(b => b.text).map(b => (
-              <div key={b.id} style={{ fontSize: 11, color: '#374151', lineHeight: 1.5, paddingLeft: 12, position: 'relative' }}>
-                <span style={{ position: 'absolute', left: 0 }}>–</span>{b.text}
-              </div>
-            ))}
-          </div>
-        ))}
-        <div style={{ height: 1, background: '#E2E8F0', margin: '0 0 16px' }} />
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Education</div>
-        {cv.education.map(e => (
-          <div key={e.id} style={{ marginBottom: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A' }}>{e.qualification}</span>
-              <span style={{ fontSize: 10, color: '#64748B' }}>{e.dates}</span>
-            </div>
-            <div style={{ fontSize: 11, color: '#64748B' }}>{e.institution}{e.grade ? ` · ${e.grade}` : ''}</div>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  /* ── Default: Clean ──────────────────────────────────────────── */
   return (
-    <div style={{ width: A4_WIDTH, minHeight: A4_HEIGHT, background: '#FFFFFF', padding: 32, fontFamily: 'Georgia, serif' }}>
+    <div id="cv-document" style={{ width: A4_WIDTH, minHeight: A4_HEIGHT, background: '#FFFFFF', padding: '48px 48px 64px', fontFamily: 'Georgia, serif' }}>
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: '#0F172A', fontFamily: 'Inter, sans-serif' }}>{cv.personal.fullName}</div>
         <div style={{ fontSize: 11, color: '#64748B', marginTop: 4, fontFamily: 'Inter, sans-serif', display: 'flex', gap: 0, flexWrap: 'wrap' }}>
@@ -373,7 +126,14 @@ function CvDocument({ cv, template }: { cv: CvData; template: TemplateId }) {
       )}
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid #E2E8F0', paddingBottom: 4, marginBottom: 6, fontFamily: 'Inter, sans-serif' }}>Skills</div>
-        <p style={{ fontSize: 11, color: '#374151', lineHeight: 1.5, margin: 0, fontFamily: 'Inter, sans-serif' }}>{allSkills.join(', ')}</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '2px 8px', marginTop: 4, fontFamily: 'Inter, sans-serif' }}>
+          {allSkills.map((skill, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 10, color: '#4B5563', lineHeight: '16px', padding: '1px 0' }}>
+              <span style={{ fontSize: 10, marginTop: 1, flexShrink: 0, color: '#6B7280' }}>•</span>
+              <span style={{ wordBreak: 'break-word', overflow: 'hidden' }}>{skill}</span>
+            </div>
+          ))}
+        </div>
       </div>
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid #E2E8F0', paddingBottom: 4, marginBottom: 6, fontFamily: 'Inter, sans-serif' }}>Work Experience</div>
@@ -386,7 +146,7 @@ function CvDocument({ cv, template }: { cv: CvData; template: TemplateId }) {
             <div style={{ fontSize: 11, fontStyle: 'italic', color: '#64748B', marginBottom: 4, fontFamily: 'Inter, sans-serif' }}>{w.company}</div>
             {w.bullets.filter(b => b.text).map(b => (
               <div key={b.id} style={{ fontSize: 11, color: '#374151', lineHeight: 1.5, paddingLeft: 14, position: 'relative', fontFamily: 'Inter, sans-serif' }}>
-                <span style={{ position: 'absolute', left: 0 }}>—</span>{b.text}
+                <span style={{ position: 'absolute', left: 0 }}>{'\u2014'}</span>{b.text}
               </div>
             ))}
           </div>
@@ -420,35 +180,43 @@ function CvDocument({ cv, template }: { cv: CvData; template: TemplateId }) {
    PDF PREVIEW MODAL — MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════ */
 export function PdfPreviewModal({
-  isOpen, onClose, cv, selectedTemplate, onTemplateChange, isDark, jobTitle, company,
+  isOpen, onClose, cv, isDark, jobTitle, company,
 }: PdfPreviewModalProps) {
-  const [zoom, setZoom] = useState(75); // percent
+  const isMobile = useIsMobile();
+
+  const [zoom, setZoom] = useState(75);
   const [downloadState, setDownloadState] = useState<'idle' | 'generating' | 'done' | 'error'>('idle');
-  const [visible, setVisible] = useState(false); // for animation
-  const [docOpacity, setDocOpacity] = useState(1); // fade on template switch
+  const [visible, setVisible] = useState(false);
+  const [docOpacity] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const documentRef = useRef<HTMLDivElement>(null);
-  const prevTemplate = useRef(selectedTemplate);
+  const [pageCount, setPageCount] = useState(1);
+
+  /* ─── Mobile document scaling ─────────────────────────────── */
+  const scaleContainerRef = useRef<HTMLDivElement>(null);
+  const [mobileScale, setMobileScale] = useState(1);
+
+  useEffect(() => {
+    if (!isMobile) { setMobileScale(1); return; }
+    function updateScale() {
+      if (!scaleContainerRef.current) return;
+      const availableWidth = scaleContainerRef.current.clientWidth - 32;
+      const newScale = Math.min(1, availableWidth / A4_WIDTH);
+      setMobileScale(newScale);
+    }
+    updateScale();
+    window.addEventListener('resize', updateScale);
+    return () => window.removeEventListener('resize', updateScale);
+  }, [isMobile]);
 
   /* ─── Open/Close animation ────────────────────────────────── */
   useEffect(() => {
     if (isOpen) {
-      // Force re-render then animate in
       requestAnimationFrame(() => setVisible(true));
     } else {
       setVisible(false);
     }
   }, [isOpen]);
-
-  /* ─── Template switch fade ────────────────────────────────── */
-  useEffect(() => {
-    if (prevTemplate.current !== selectedTemplate) {
-      setDocOpacity(0);
-      const t = setTimeout(() => setDocOpacity(1), 30);
-      prevTemplate.current = selectedTemplate;
-      return () => clearTimeout(t);
-    }
-  }, [selectedTemplate]);
 
   /* ─── Zoom helpers ────────────────────────────────────────── */
   const zoomIn = () => {
@@ -460,12 +228,13 @@ export function PdfPreviewModal({
     if (idx > 0) setZoom(ZOOM_STEPS[idx - 1]);
   };
 
-  /* ─── Drag-to-pan when zoomed in ─────────────────────────── */
+  /* ─── Drag-to-pan when zoomed in (desktop only) ──────────── */
   const viewerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
   const handleViewerPointerDown = useCallback((e: React.PointerEvent) => {
+    if (isMobile) return;
     const el = viewerRef.current;
     if (!el) return;
     isDraggingRef.current = true;
@@ -473,7 +242,7 @@ export function PdfPreviewModal({
     el.setPointerCapture(e.pointerId);
     el.style.cursor = 'grabbing';
     e.preventDefault();
-  }, [panOffset]);
+  }, [panOffset, isMobile]);
 
   const handleViewerPointerMove = useCallback((e: React.PointerEvent) => {
     if (!isDraggingRef.current) return;
@@ -501,115 +270,92 @@ export function PdfPreviewModal({
     }
   }, [zoom]);
 
-  /* ─── Download PDF ────────────────────────────────────────── */
+  /* ─── Track page count via ResizeObserver ──────────────────── */
+  useEffect(() => {
+    const el = documentRef.current;
+    if (!el || !isOpen) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const h = entry.contentRect.height;
+      setPageCount(Math.max(1, Math.ceil(h / A4_HEIGHT)));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isOpen]);
+
+  /* ─── Download PDF (server-side generation) ────────────────── */
   const handleDownload = useCallback(async () => {
     if (downloadState === 'generating') return;
-    const el = documentRef.current;
-    if (!el) return;
 
     setDownloadState('generating');
-    let wrapper: HTMLDivElement | null = null;
     try {
-      // Clone the document into an isolated container so html2canvas
-      // doesn't encounter any inherited oklch() colours from Tailwind v4.
-      wrapper = document.createElement('div');
-      // `all: initial` resets every inherited CSS property (including oklch custom props)
-      wrapper.style.setProperty('all', 'initial');
-      wrapper.style.position = 'fixed';
-      wrapper.style.left = '-9999px';
-      wrapper.style.top = '0';
-      wrapper.style.zIndex = '-1';
-      wrapper.style.background = '#FFFFFF';
-      wrapper.style.color = '#000000';
-      wrapper.style.fontFamily = 'Inter, sans-serif';
-      wrapper.style.pointerEvents = 'none';
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) throw new Error('Not authenticated');
 
-      const clone = el.cloneNode(true) as HTMLElement;
-
-      // Recursively strip any oklch() values from inline/computed styles
-      const stripOklch = (node: HTMLElement) => {
-        const style = node.style;
-        for (let i = style.length - 1; i >= 0; i--) {
-          const prop = style[i];
-          const val = style.getPropertyValue(prop);
-          if (val && val.includes('oklch')) {
-            style.removeProperty(prop);
-          }
-        }
-        // Also override color/background if computed values contain oklch
-        const computed = window.getComputedStyle(node);
-        const colorProps = ['color', 'background-color', 'border-color', 'outline-color'];
-        for (const cp of colorProps) {
-          const cv = computed.getPropertyValue(cp);
-          if (cv && cv.includes('oklch')) {
-            if (cp === 'color') node.style.color = '#000000';
-            else if (cp === 'background-color') node.style.backgroundColor = 'transparent';
-            else if (cp === 'border-color') node.style.borderColor = 'transparent';
-            else if (cp === 'outline-color') node.style.outlineColor = 'transparent';
-          }
-        }
-        for (let i = 0; i < node.children.length; i++) {
-          if (node.children[i] instanceof HTMLElement) {
-            stripOklch(node.children[i] as HTMLElement);
-          }
-        }
+      const cvPayload = {
+        name: cv.personal.fullName,
+        email: cv.personal.email,
+        phone: cv.personal.phone,
+        location: cv.personal.location,
+        linkedin: cv.personal.linkedin,
+        portfolio: cv.personal.portfolio,
+        summary: cv.summary,
+        skills: cv.skills.map(s => s.name),
+        work_history: cv.workHistory.map(w => ({
+          title: w.title,
+          company: w.company,
+          start_date: w.startDate,
+          end_date: w.endDate,
+          bullets: w.bullets.filter(b => b.text).map(b => b.text),
+        })),
+        education: cv.education.map(e => ({
+          qualification: e.qualification,
+          institution: e.institution,
+          dates: e.dates,
+          grade: e.grade,
+        })),
+        certifications: cv.showCertifications
+          ? cv.certifications.map(c => ({ label: c.label }))
+          : [],
       };
 
-      wrapper.appendChild(clone);
-      document.body.appendChild(wrapper);
+      const SUPABASE_URL = `https://${projectId}.supabase.co`;
+      const response = await fetch(
+        `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/generate-pdf`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${publicAnonKey}`,
+            'apikey': publicAnonKey,
+            'X-User-Token': accessToken,
+          },
+          body: JSON.stringify({
+            cv_json: cvPayload,
+          }),
+        },
+      );
 
-      // Strip oklch after appending so computed styles are available
-      stripOklch(clone);
-
-      const canvas = await html2canvas(clone, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#FFFFFF',
-        logging: false,
-        width: A4_WIDTH,
-        windowWidth: A4_WIDTH,
-      });
-
-      // Clean up the temporary clone
-      document.body.removeChild(wrapper);
-      wrapper = null;
-
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'pt',
-        format: 'a4',
-      });
-
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pdfWidth;
-      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
-
-      // Handle multi-page if content exceeds one page
-      let heightLeft = imgHeight;
-      let position = 0;
-      let page = 0;
-
-      while (heightLeft > 0) {
-        if (page > 0) pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pdfHeight;
-        position -= pdfHeight;
-        page++;
+      if (!response.ok) {
+        const errBody = await response.text();
+        console.error('[download-pdf] server error:', response.status, errBody);
+        throw new Error(`PDF generation failed (${response.status})`);
       }
 
-      const fileName = `${cv.personal.fullName.replace(/\s+/g, '_')}_CV.pdf`;
-      pdf.save(fileName);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${cv.personal.fullName.replace(/\s+/g, '_')}_CV.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
 
       setDownloadState('done');
       setTimeout(() => setDownloadState('idle'), 2000);
     } catch (err) {
-      console.error('PDF generation error:', err);
-      // Clean up wrapper if still in DOM
-      if (wrapper && wrapper.parentNode) {
-        document.body.removeChild(wrapper);
-      }
+      console.error('[download-pdf] error:', err);
       setDownloadState('error');
       setTimeout(() => setDownloadState('idle'), 3000);
     }
@@ -635,13 +381,7 @@ export function PdfPreviewModal({
   /* ─── Don't render if not open ────────────────────────────── */
   if (!isOpen) return null;
 
-  const scale = zoom / 100;
-
-  const templates: { id: TemplateId; label: string; locked: boolean }[] = [
-    { id: 'clean', label: 'Clean', locked: false },
-    { id: 'sidebar', label: 'Sidebar', locked: true },
-    { id: 'minimal', label: 'Minimal', locked: true },
-  ];
+  const scale = isMobile ? 1 : zoom / 100;
 
   /* ─── Download button content ─────────────────────────────── */
   const downloadBtnContent = () => {
@@ -650,28 +390,28 @@ export function PdfPreviewModal({
         return (
           <>
             <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
-            Generating...
+            {!isMobile && 'Generating...'}
           </>
         );
       case 'done':
         return (
           <>
             <CheckCircle2 size={14} />
-            Downloaded!
+            {!isMobile && 'Downloaded!'}
           </>
         );
       case 'error':
         return (
           <>
             <X size={14} />
-            Failed — retry
+            {!isMobile && 'Failed \u2014 retry'}
           </>
         );
       default:
         return (
           <>
             <Download size={14} />
-            Download PDF
+            {!isMobile && 'Download PDF'}
           </>
         );
     }
@@ -690,7 +430,6 @@ export function PdfPreviewModal({
       {/* Keyframes */}
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes pdf-tooltip-in { from { opacity: 0; transform: translateX(-50%) translateY(-4px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
       `}</style>
 
       {/* Overlay */}
@@ -702,105 +441,55 @@ export function PdfPreviewModal({
           backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
           opacity: visible ? 1 : 0,
           transition: 'opacity 200ms ease-out',
-          display: 'flex', flexDirection: 'column',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: isMobile ? 'stretch' : 'flex-start',
+          padding: isMobile ? 0 : '5vh 0',
         }}
       >
-        {/* Modal content wrapper with scale animation */}
+        {/* Modal container */}
         <div style={{
-          display: 'flex', flexDirection: 'column', flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          width: isMobile ? '100%' : '90%',
+          maxWidth: isMobile ? '100%' : 900,
+          height: isMobile ? '100%' : '90vh',
+          borderRadius: isMobile ? 0 : 12,
+          overflow: 'hidden',
+          background: isDark ? '#0F172A' : '#F1F5F9',
           transform: visible ? 'scale(1)' : 'scale(0.96)',
           opacity: visible ? 1 : 0,
           transition: 'transform 200ms ease-out, opacity 200ms ease-out',
         }}>
           {/* ── TOP TOOLBAR ─────────────────────────────────────── */}
           <div style={{
-            height: 56, flexShrink: 0,
-            padding: '0 24px',
+            height: isMobile ? 'auto' : 56, flexShrink: 0,
+            padding: isMobile ? '10px 16px' : '0 24px',
             background: isDark ? '#1E293B' : '#FFFFFF',
             borderBottom: `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)'}`,
-            display: 'flex', alignItems: 'center',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             transition: 'background 0.2s, border-color 0.2s',
           }}>
             {/* Left: Title */}
-            <div style={{ flex: '0 1 auto', display: 'flex', flexDirection: 'column', justifyContent: 'center', marginRight: 24, minWidth: 0 }}>
+            <div style={{ flex: '0 1 auto', display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>
               <span style={{
-                fontSize: 16, fontWeight: 600, fontFamily: font, lineHeight: 1.2,
+                fontSize: isMobile ? 15 : 16, fontWeight: 600, fontFamily: font, lineHeight: 1.2,
                 color: isDark ? '#F8FAFC' : '#0F172A',
               }}>
                 CV Preview
               </span>
               <span style={{
-                fontSize: 13, fontWeight: 400, fontFamily: font, lineHeight: 1.3,
+                fontSize: isMobile ? 12 : 13, fontWeight: 400, fontFamily: font, lineHeight: 1.3,
                 color: isDark ? '#94A3B8' : '#64748B',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                maxWidth: isMobile ? '50vw' : undefined,
               }}>
-                {jobTitle} — {company}
+                {jobTitle} {'\u2014'} {company}
               </span>
             </div>
 
-            {/* Centre: Template switcher */}
-            <div style={{
-              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
-            }}>
-              {templates.map(t => (
-                <TemplateThumbnail
-                  key={t.id}
-                  id={t.id}
-                  label={t.label}
-                  isActive={selectedTemplate === t.id}
-                  isLocked={t.locked}
-                  isDark={isDark}
-                  onClick={() => onTemplateChange(t.id)}
-                />
-              ))}
-            </div>
-
-            {/* Right: Zoom + Download + Close */}
-            <div style={{ flex: '0 1 auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-              {/* Zoom controls */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 0,
-                border: `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)'}`,
-                borderRadius: 8, overflow: 'hidden',
-              }}>
-                <button
-                  onClick={zoomOut}
-                  aria-label="Zoom out"
-                  disabled={zoom <= ZOOM_STEPS[0]}
-                  style={{
-                    background: 'none', border: 'none', cursor: zoom <= ZOOM_STEPS[0] ? 'not-allowed' : 'pointer',
-                    padding: '6px 8px', display: 'flex', alignItems: 'center',
-                    color: zoom <= ZOOM_STEPS[0] ? (isDark ? '#475569' : '#CBD5E1') : isDark ? '#94A3B8' : '#64748B',
-                    transition: 'color 0.15s',
-                  }}
-                >
-                  <ZoomOut size={14} />
-                </button>
-                <span style={{
-                  fontSize: 12, fontWeight: 500, fontFamily: font, lineHeight: 1,
-                  color: isDark ? '#F8FAFC' : '#0F172A',
-                  padding: '0 6px', minWidth: 36, textAlign: 'center',
-                  borderLeft: `1px solid ${isDark ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.2)'}`,
-                  borderRight: `1px solid ${isDark ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.2)'}`,
-                }}>
-                  {zoom}%
-                </span>
-                <button
-                  onClick={zoomIn}
-                  aria-label="Zoom in"
-                  disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
-                  style={{
-                    background: 'none', border: 'none', cursor: zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1] ? 'not-allowed' : 'pointer',
-                    padding: '6px 8px', display: 'flex', alignItems: 'center',
-                    color: zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1] ? (isDark ? '#475569' : '#CBD5E1') : isDark ? '#94A3B8' : '#64748B',
-                    transition: 'color 0.15s',
-                  }}
-                >
-                  <ZoomIn size={14} />
-                </button>
-              </div>
-
-              {/* Download PDF */}
+            {/* Right: Download + Close */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button
                 onClick={handleDownload}
                 disabled={downloadState === 'generating'}
@@ -810,7 +499,7 @@ export function PdfPreviewModal({
                   background: downloadBtnBg(),
                   border: 'none', borderRadius: 8,
                   cursor: downloadState === 'generating' ? 'wait' : 'pointer',
-                  color: '#FFFFFF', fontSize: 14, fontWeight: 600, fontFamily: font, lineHeight: 1,
+                  color: '#FFFFFF', fontSize: isMobile ? 13 : 14, fontWeight: 600, fontFamily: font, lineHeight: 1,
                   transition: 'background 0.2s, transform 0.1s',
                   whiteSpace: 'nowrap',
                 }}
@@ -822,7 +511,6 @@ export function PdfPreviewModal({
                 {downloadBtnContent()}
               </button>
 
-              {/* Close */}
               <button
                 onClick={onClose}
                 aria-label="Close preview"
@@ -846,66 +534,205 @@ export function PdfPreviewModal({
             </div>
           </div>
 
-          {/* ── DOCUMENT VIEWER ──────────────────────────────────── */}
-          <div
-            ref={viewerRef}
-            style={{
-              flex: 1, overflow: 'hidden', padding: '32px 48px',
-              display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
-              cursor: 'grab',
-              userSelect: 'none',
-              position: 'relative',
-            }}
-            onPointerDown={handleViewerPointerDown}
-            onPointerMove={handleViewerPointerMove}
-            onPointerUp={handleViewerPointerUp}
-            onPointerCancel={handleViewerPointerUp}
-          >
-            {/* Pannable + zoomable container */}
-            <div style={{
-              transformOrigin: 'top center',
-              transform: `scale(${scale}) translate(${panOffset.x / scale}px, ${panOffset.y / scale}px)`,
-              transition: isDraggingRef.current ? 'none' : 'transform 0.2s ease-out',
-              flexShrink: 0,
-            }}>
-              {/* The actual A4 document */}
-              <div
-                ref={documentRef}
-                style={{
-                  boxShadow: isDark
-                    ? '0 8px 40px rgba(0,0,0,0.4)'
-                    : '0 8px 40px rgba(15,23,42,0.15)',
-                  borderRadius: 4,
-                  overflow: 'hidden',
-                  opacity: docOpacity,
-                  transition: 'opacity 200ms ease-out',
-                  pointerEvents: 'none',
-                }}
-              >
-                <CvDocument cv={cv} template={selectedTemplate} />
-              </div>
-            </div>
-
-            {/* Drag hint — always visible */}
+          {/* ── DOCUMENT VIEWER ─────────────────────────────────── */}
+          {isMobile ? (
+            /* MOBILE: Scrollable scaled document */
             <div
-              onPointerDown={e => e.stopPropagation()}
+              ref={scaleContainerRef}
               style={{
-                position: 'absolute', bottom: 16, right: 16,
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '6px 14px', borderRadius: 8,
-                background: isDark ? 'rgba(30,41,59,0.85)' : 'rgba(255,255,255,0.85)',
-                backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
-                border: `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)'}`,
-                boxShadow: isDark ? '0 4px 24px rgba(0,0,0,0.4)' : '0 4px 24px rgba(15,23,42,0.08)',
-                fontSize: 12, fontWeight: 500, fontFamily: font,
-                color: isDark ? '#94A3B8' : '#64748B',
-                pointerEvents: 'none',
-                zIndex: 10,
+                flex: 1, overflowY: 'auto', overflowX: 'hidden',
+                padding: '16px 16px 48px',
+                WebkitOverflowScrolling: 'touch' as any,
               }}
             >
-              <Move size={13} /> Drag to pan
+              <div style={{
+                width: A4_WIDTH,
+                transformOrigin: 'top left',
+                transform: `scale(${mobileScale})`,
+              }}>
+                <div
+                  ref={documentRef}
+                  style={{
+                    boxShadow: isDark
+                      ? '0 8px 40px rgba(0,0,0,0.4)'
+                      : '0 8px 40px rgba(15,23,42,0.15)',
+                    borderRadius: 4,
+                    overflow: 'visible',
+                    opacity: docOpacity,
+                    transition: 'opacity 200ms ease-out',
+                    position: 'relative',
+                  }}
+                >
+                  <CvDocument cv={cv} />
+                  {/* Page break indicators */}
+                  {pageCount > 1 && Array.from({ length: pageCount - 1 }, (_, i) => (
+                    <div key={i} data-page-break="true" style={{ position: 'absolute', top: A4_HEIGHT * (i + 1), left: 0, right: 0, pointerEvents: 'none', zIndex: 10 }}>
+                      <div style={{
+                        width: '100%', height: 1,
+                        background: 'repeating-linear-gradient(to right, rgba(99,102,241,0.35) 0px, rgba(99,102,241,0.35) 6px, transparent 6px, transparent 12px)',
+                      }} />
+                      <span style={{
+                        position: 'absolute', right: 8, top: -8,
+                        fontSize: 9, fontWeight: 500, fontFamily: font,
+                        color: 'rgba(99,102,241,0.5)',
+                        background: '#FFFFFF', padding: '1px 4px', borderRadius: 2, lineHeight: 1,
+                      }}>p.{i + 2}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* DESKTOP: Pannable + zoomable viewer */
+            <div
+              ref={viewerRef}
+              style={{
+                flex: 1, overflow: 'hidden', padding: '32px 48px 48px',
+                display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
+                cursor: 'grab',
+                userSelect: 'none',
+                position: 'relative',
+              }}
+              onPointerDown={handleViewerPointerDown}
+              onPointerMove={handleViewerPointerMove}
+              onPointerUp={handleViewerPointerUp}
+              onPointerCancel={handleViewerPointerUp}
+            >
+              {/* Pannable + zoomable container */}
+              <div style={{
+                transformOrigin: 'top center',
+                transform: `scale(${scale}) translate(${panOffset.x / scale}px, ${panOffset.y / scale}px)`,
+                transition: isDraggingRef.current ? 'none' : 'transform 0.2s ease-out',
+                flexShrink: 0,
+              }}>
+                {/* The actual A4 document */}
+                <div
+                  ref={documentRef}
+                  style={{
+                    boxShadow: isDark
+                      ? '0 8px 40px rgba(0,0,0,0.4)'
+                      : '0 8px 40px rgba(15,23,42,0.15)',
+                    borderRadius: 4,
+                    overflow: 'visible',
+                    opacity: docOpacity,
+                    transition: 'opacity 200ms ease-out',
+                    pointerEvents: 'none',
+                    position: 'relative',
+                  }}
+                >
+                  <CvDocument cv={cv} />
+                  {/* Page break indicators */}
+                  {pageCount > 1 && Array.from({ length: pageCount - 1 }, (_, i) => (
+                    <div key={i} data-page-break="true" style={{ position: 'absolute', top: A4_HEIGHT * (i + 1), left: 0, right: 0, pointerEvents: 'none', zIndex: 10 }}>
+                      <div style={{
+                        width: '100%', height: 1,
+                        background: 'repeating-linear-gradient(to right, rgba(99,102,241,0.35) 0px, rgba(99,102,241,0.35) 6px, transparent 6px, transparent 12px)',
+                      }} />
+                      <span style={{
+                        position: 'absolute', right: 8, top: -8,
+                        fontSize: 9, fontWeight: 500, fontFamily: font,
+                        color: 'rgba(99,102,241,0.5)',
+                        background: '#FFFFFF', padding: '1px 4px', borderRadius: 2, lineHeight: 1,
+                      }}>p.{i + 2}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Drag hint */}
+              <div
+                onPointerDown={e => e.stopPropagation()}
+                style={{
+                  position: 'absolute', bottom: 16, right: 16,
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '6px 14px', borderRadius: 8,
+                  background: isDark ? 'rgba(30,41,59,0.85)' : 'rgba(255,255,255,0.85)',
+                  backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+                  border: `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)'}`,
+                  boxShadow: isDark ? '0 4px 24px rgba(0,0,0,0.4)' : '0 4px 24px rgba(15,23,42,0.08)',
+                  fontSize: 12, fontWeight: 500, fontFamily: font,
+                  color: isDark ? '#94A3B8' : '#64748B',
+                  pointerEvents: 'none',
+                  zIndex: 10,
+                }}
+              >
+                <Move size={13} /> Drag to pan
+              </div>
+
+              {/* Floating zoom controls */}
+              <div
+                onPointerDown={e => e.stopPropagation()}
+                style={{
+                  position: 'absolute', bottom: 16, left: 16,
+                  display: 'flex', alignItems: 'center', gap: 0,
+                  borderRadius: 8, overflow: 'hidden',
+                  background: isDark ? 'rgba(30,41,59,0.85)' : 'rgba(255,255,255,0.85)',
+                  backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+                  border: `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)'}`,
+                  boxShadow: isDark ? '0 4px 24px rgba(0,0,0,0.4)' : '0 4px 24px rgba(15,23,42,0.08)',
+                  zIndex: 10,
+                  pointerEvents: 'auto',
+                }}
+              >
+                <button
+                  onClick={zoomOut}
+                  aria-label="Zoom out"
+                  disabled={zoom <= ZOOM_STEPS[0]}
+                  style={{
+                    background: 'none', border: 'none',
+                    cursor: zoom <= ZOOM_STEPS[0] ? 'not-allowed' : 'pointer',
+                    padding: '6px 8px', display: 'flex', alignItems: 'center',
+                    color: zoom <= ZOOM_STEPS[0]
+                      ? (isDark ? '#475569' : '#CBD5E1')
+                      : isDark ? '#94A3B8' : '#64748B',
+                    transition: 'color 0.15s',
+                  }}
+                >
+                  <ZoomOut size={14} />
+                </button>
+                <span style={{
+                  fontSize: 12, fontWeight: 500, fontFamily: font, lineHeight: 1,
+                  color: isDark ? '#F8FAFC' : '#0F172A',
+                  padding: '0 6px', minWidth: 36, textAlign: 'center',
+                  borderLeft: `1px solid ${isDark ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.2)'}`,
+                  borderRight: `1px solid ${isDark ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.2)'}`,
+                }}>
+                  {zoom}%
+                </span>
+                <button
+                  onClick={zoomIn}
+                  aria-label="Zoom in"
+                  disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+                  style={{
+                    background: 'none', border: 'none',
+                    cursor: zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1] ? 'not-allowed' : 'pointer',
+                    padding: '6px 8px', display: 'flex', alignItems: 'center',
+                    color: zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]
+                      ? (isDark ? '#475569' : '#CBD5E1')
+                      : isDark ? '#94A3B8' : '#64748B',
+                    transition: 'color 0.15s',
+                  }}
+                >
+                  <ZoomIn size={14} />
+                </button>
+                {pageCount > 1 && (
+                  <>
+                    <div style={{
+                      width: 1, alignSelf: 'stretch',
+                      background: isDark ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.2)',
+                    }} />
+                    <span style={{
+                      fontSize: 11, fontWeight: 500, fontFamily: font, lineHeight: 1,
+                      color: isDark ? '#94A3B8' : '#64748B',
+                      padding: '0 8px', whiteSpace: 'nowrap',
+                    }}>
+                      {pageCount} pages
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>

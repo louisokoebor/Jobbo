@@ -164,13 +164,13 @@ export function CvPreviewPage() {
   const navigate = useNavigate();
 
   const [theme, setTheme] = useState<Theme>(() =>
-    (typeof window !== 'undefined' && (localStorage.getItem('jobbo-theme') as Theme)) || 'dark'
+    (typeof window !== 'undefined' && (localStorage.getItem('applyly-theme') as Theme)) || 'light'
   );
   const isDark = theme === 'dark';
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('jobbo-theme', theme);
+    localStorage.setItem('applyly-theme', theme);
   }, [theme]);
 
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('clean');

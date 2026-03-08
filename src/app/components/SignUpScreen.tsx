@@ -219,9 +219,9 @@ export function SignUpScreen() {
 
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window !== 'undefined') {
-      return (localStorage.getItem('jobbo-theme') as Theme) || 'dark';
+      return (localStorage.getItem('applyly-theme') as Theme) || 'light';
     }
-    return 'dark';
+    return 'light';
   });
 
   // Form fields
@@ -244,7 +244,7 @@ export function SignUpScreen() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('jobbo-theme', theme);
+    localStorage.setItem('applyly-theme', theme);
   }, [theme]);
 
   const toggleTheme = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'));
@@ -405,7 +405,7 @@ export function SignUpScreen() {
             lineHeight: 1,
           }}
         >
-          Jobbo
+          Applyly
         </button>
         <ThemeToggleButton isDark={isDark} onToggle={toggleTheme} />
       </nav>

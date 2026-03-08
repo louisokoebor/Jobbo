@@ -1,13 +1,13 @@
-Build the Dashboard / Application Tracker screen for Jobbo — an AI-powered CV tailoring SaaS.
+Build the Dashboard / Application Tracker screen for Applyly — an AI-powered CV tailoring SaaS.
 
 THEME
-Same dark/light system. Dark default. jobbo-theme localStorage. Same tokens throughout.
+Same dark/light system. Dark default. applyly-theme localStorage. Same tokens throughout.
 
 DESIGN SYSTEM
 Same Inter font, same colour palette. Kanban cards use glass treatment. Stats bar uses glass treatment. Main background uses deep gradient with subtle grid pattern overlay at 3% opacity.
 
 FULL APP SHELL LAYOUT
-- Sticky glass nav: 60px height, Jobbo wordmark left (Inter 700 20px brand blue), centre links: "Dashboard" "Applications" "Profile" (Inter 500 14px secondary text, active = primary text + brand blue underline), right: "New Application" primary button (compact, 36px height) + avatar circle dropdown menu (logout option).
+- Sticky glass nav: 60px height, Applyly wordmark left (Inter 700 20px brand blue), centre links: "Dashboard" "Applications" "Profile" (Inter 500 14px secondary text, active = primary text + brand blue underline), right: "New Application" primary button (compact, 36px height) + avatar circle dropdown menu (logout option).
 - Below nav: full-width stats bar (glass), then kanban board fills remaining viewport height with scroll.
 
 STATS BAR (glass treatment)

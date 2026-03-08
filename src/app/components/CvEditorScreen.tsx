@@ -13,19 +13,20 @@ import { useNavigate, useSearchParams, useParams } from 'react-router';
 import {
   ChevronDown, ChevronUp, Plus, X, Save,
   Loader2, CheckCircle2, AlertTriangle, GripVertical, Trash2, Eye,
-  FileText, ExternalLink, ToggleLeft, ToggleRight, ArrowLeft, ArrowRight,
-  ZoomIn, ZoomOut, Maximize, Move,
+  ExternalLink, ToggleLeft, ToggleRight, ArrowLeft, ArrowRight,
+  ZoomIn, ZoomOut, Maximize, Move, Check, Sparkles,
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { projectId, publicAnonKey } from '../lib/supabaseClient';
 import { PdfPreviewModal } from './PdfPreviewModal';
 import { SharedNavbar } from './SharedNavbar';
+import { useNavigation } from '../lib/NavigationContext';
+import { useUserPlan } from '../lib/UserPlanContext';
 
 const SUPABASE_URL = `https://${projectId}.supabase.co`;
 
 /* ─── Types ──────────────────────────────────────────────────── */
 type Theme = 'dark' | 'light';
-type TemplateId = 'clean' | 'sidebar' | 'minimal';
 
 interface PersonalDetails {
   fullName: string;
@@ -156,11 +157,6 @@ const INITIAL_CV: CvData = {
 
 /* ─── Helpers ────────────────────────────────────────────────── */
 function uid() { return `_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`; }
-
-function calcAtsMatch(skills: Skill[]): number {
-  const matched = skills.filter(s => s.type === 'matched').length;
-  return skills.length > 0 ? Math.round((matched / skills.length) * 100) : 0;
-}
 
 /* ─── Shared Styles ──────────────────────────────────────────── */
 const font = 'Inter, sans-serif';
@@ -339,10 +335,12 @@ function AddSkillInline({ isDark, onAdd }: { isDark: boolean; onAdd: (name: stri
 }
 
 /* ─── Collapsible Role Card ──────────────────────────────────── */
-function RoleCard({ role, isDark, onChange, onDelete }: {
+function RoleCard({ role, isDark, onChange, onDelete, jobTitle, jobDescription }: {
   role: WorkRole; isDark: boolean;
   onChange: (updated: WorkRole) => void;
   onDelete: () => void;
+  jobTitle?: string;
+  jobDescription?: string;
 }) {
   const toggle = () => onChange({ ...role, expanded: !role.expanded });
   const updateBullet = (bulletId: string, text: string) => {
@@ -353,6 +351,60 @@ function RoleCard({ role, isDark, onChange, onDelete }: {
   };
   const addBullet = () => {
     onChange({ ...role, bullets: [...role.bullets, { id: uid(), text: '' }] });
+  };
+
+  // ─── Per-bullet AI improve ───────────────────────────────────
+  const [improvingBulletId, setImprovingBulletId] = useState<string | null>(null);
+  const [suggestion, setSuggestion] = useState<{ bulletId: string; original: string; improved: string } | null>(null);
+  const [bulletError, setBulletError] = useState<string | null>(null);
+
+  const improveBullet = async (bullet: Bullet) => {
+    if (!bullet.text.trim()) return;
+    setImprovingBulletId(bullet.id);
+    setBulletError(null);
+    setSuggestion(null);
+    try {
+      const res = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-3bbff5cf/improve-bullet`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${publicAnonKey}`,
+            'apikey': publicAnonKey,
+            'X-User-Token': (await supabase.auth.getSession()).data.session?.access_token || '',
+          },
+          body: JSON.stringify({
+            bulletText: bullet.text,
+            jobTitle: jobTitle || '',
+            jobDescription: jobDescription || '',
+            roleTitle: role.title,
+          }),
+        },
+      );
+      const data = await res.json();
+      if (data.success && data.improved) {
+        setSuggestion({ bulletId: bullet.id, original: bullet.text, improved: data.improved });
+      } else {
+        setBulletError(bullet.id);
+        setTimeout(() => setBulletError(null), 3000);
+      }
+    } catch {
+      setBulletError(bullet.id);
+      setTimeout(() => setBulletError(null), 3000);
+    } finally {
+      setImprovingBulletId(null);
+    }
+  };
+
+  const acceptSuggestion = () => {
+    if (!suggestion) return;
+    updateBullet(suggestion.bulletId, suggestion.improved);
+    setSuggestion(null);
+  };
+
+  const rejectSuggestion = () => {
+    setSuggestion(null);
   };
 
   const inlineInput = (value: string, placeholder: string, onChange: (v: string) => void, fw = 400, fs = 14): React.CSSProperties => ({
@@ -434,40 +486,126 @@ function RoleCard({ role, isDark, onChange, onDelete }: {
       {/* Body */}
       {role.expanded && (
         <div style={{ marginTop: 12, paddingLeft: 24 }}>
-          {role.bullets.map(bullet => (
-            <div key={bullet.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
-              <GripVertical size={14} color={isDark ? '#64748B' : '#94A3B8'} style={{ cursor: 'grab', flexShrink: 0, marginTop: 6 }} />
-              <textarea
-                value={bullet.text}
-                onChange={e => updateBullet(bullet.id, e.target.value)}
-                placeholder="Describe an achievement…"
-                rows={1}
-                style={{
-                  flex: 1, background: 'none', border: 'none', outline: 'none', resize: 'none',
-                  fontFamily: font, fontSize: 14, fontWeight: 400,
-                  color: isDark ? '#F8FAFC' : '#0F172A', padding: '4px 0', lineHeight: 1.5,
-                  borderBottom: `1px solid ${isDark ? 'rgba(148,163,184,0.08)' : 'rgba(148,163,184,0.12)'}`,
-                  transition: 'border-color 0.15s', overflow: 'hidden',
-                  minHeight: 28, fieldSizing: 'content' as any,
-                }}
-                onFocus={e => e.currentTarget.style.borderBottomColor = '#1A56DB'}
-                onBlur={e => e.currentTarget.style.borderBottomColor = isDark ? 'rgba(148,163,184,0.08)' : 'rgba(148,163,184,0.12)'}
-              />
-              <button
-                onClick={() => removeBullet(bullet.id)}
-                aria-label="Delete bullet"
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: isDark ? '#64748B' : '#94A3B8', padding: 4, display: 'flex', lineHeight: 1,
-                  flexShrink: 0, marginTop: 2, transition: 'color 0.15s',
-                }}
-                onMouseEnter={e => (e.currentTarget.style.color = '#EF4444')}
-                onMouseLeave={e => (e.currentTarget.style.color = isDark ? '#64748B' : '#94A3B8')}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          ))}
+          {role.bullets.map(bullet => {
+            const isImproving = improvingBulletId === bullet.id;
+            const hasSuggestion = suggestion?.bulletId === bullet.id;
+            const hasError = bulletError === bullet.id;
+            return (
+              <div key={bullet.id} style={{ marginBottom: 6 }}>
+                <div className="cve-bullet-row" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, position: 'relative' }}>
+                  <GripVertical size={14} color={isDark ? '#64748B' : '#94A3B8'} style={{ cursor: 'grab', flexShrink: 0, marginTop: 6 }} />
+                  {/* Sparkles / Loader */}
+                  {isImproving ? (
+                    <Loader2 size={13} style={{ flexShrink: 0, marginTop: 7, color: '#1A56DB', animation: 'spin 1s linear infinite' }} />
+                  ) : (
+                    <button
+                      className="cve-sparkle-btn"
+                      onClick={() => improveBullet(bullet)}
+                      aria-label="Improve this bullet with AI"
+                      title="Improve this bullet with AI"
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        color: isDark ? '#94A3B8' : '#94A3B8', padding: 0, display: 'flex', lineHeight: 1,
+                        flexShrink: 0, marginTop: 6, transition: 'color 0.15s', opacity: 0,
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.color = '#1A56DB')}
+                      onMouseLeave={e => (e.currentTarget.style.color = '#94A3B8')}
+                    >
+                      <Sparkles size={13} />
+                    </button>
+                  )}
+                  <textarea
+                    value={bullet.text}
+                    onChange={e => updateBullet(bullet.id, e.target.value)}
+                    placeholder="Describe an achievement…"
+                    rows={1}
+                    disabled={isImproving}
+                    style={{
+                      flex: 1, background: 'none', border: 'none', outline: 'none', resize: 'none',
+                      fontFamily: font, fontSize: 14, fontWeight: 400,
+                      color: isDark ? '#F8FAFC' : '#0F172A', padding: '4px 0', lineHeight: 1.5,
+                      borderBottom: `1px solid ${isDark ? 'rgba(148,163,184,0.08)' : 'rgba(148,163,184,0.12)'}`,
+                      transition: 'border-color 0.15s, opacity 0.15s', overflow: 'hidden',
+                      minHeight: 28, fieldSizing: 'content' as any,
+                      opacity: isImproving ? 0.5 : 1,
+                    }}
+                    onFocus={e => e.currentTarget.style.borderBottomColor = '#1A56DB'}
+                    onBlur={e => e.currentTarget.style.borderBottomColor = isDark ? 'rgba(148,163,184,0.08)' : 'rgba(148,163,184,0.12)'}
+                  />
+                  <button
+                    onClick={() => removeBullet(bullet.id)}
+                    aria-label="Delete bullet"
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: isDark ? '#64748B' : '#94A3B8', padding: 4, display: 'flex', lineHeight: 1,
+                      flexShrink: 0, marginTop: 2, transition: 'color 0.15s',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.color = '#EF4444')}
+                    onMouseLeave={e => (e.currentTarget.style.color = isDark ? '#64748B' : '#94A3B8')}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                {/* Suggestion UI */}
+                {hasSuggestion && (
+                  <div style={{ marginLeft: 38, marginTop: 6, marginBottom: 4 }}>
+                    <p style={{
+                      fontSize: 12, fontFamily: font, fontWeight: 400,
+                      color: isDark ? '#64748B' : '#94A3B8',
+                      textDecoration: 'line-through', margin: '0 0 6px', lineHeight: 1.5,
+                    }}>
+                      {suggestion.original}
+                    </p>
+                    <div style={{
+                      fontSize: 14, fontFamily: font, fontWeight: 400,
+                      color: isDark ? '#F8FAFC' : '#0F172A',
+                      background: isDark ? 'rgba(26,86,219,0.06)' : 'rgba(26,86,219,0.06)',
+                      borderRadius: 6, padding: 8, lineHeight: 1.5,
+                      margin: '0 0 8px',
+                    }}>
+                      {suggestion.improved}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={acceptSuggestion}
+                        style={{
+                          background: '#1A56DB', color: '#fff', border: 'none',
+                          borderRadius: 6, padding: '4px 12px', fontSize: 12,
+                          fontWeight: 500, fontFamily: font, cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', gap: 4,
+                        }}
+                      >
+                        <Check size={12} /> Accept
+                      </button>
+                      <button
+                        onClick={rejectSuggestion}
+                        style={{
+                          background: 'transparent',
+                          color: isDark ? '#94A3B8' : '#64748B',
+                          border: `1px solid ${isDark ? 'rgba(148,163,184,0.2)' : 'rgba(148,163,184,0.3)'}`,
+                          borderRadius: 6, padding: '4px 12px', fontSize: 12,
+                          fontWeight: 500, fontFamily: font, cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', gap: 4,
+                        }}
+                      >
+                        <X size={12} /> Keep original
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {/* Error message */}
+                {hasError && (
+                  <p style={{
+                    marginLeft: 38, marginTop: 4, fontSize: 12, fontFamily: font,
+                    color: '#EF4444', fontWeight: 400,
+                    animation: 'cve-fade-in 0.2s ease-out',
+                  }}>
+                    Couldn't improve this bullet — try again
+                  </p>
+                )}
+              </div>
+            );
+          })}
           <button
             onClick={addBullet}
             style={{
@@ -595,144 +733,366 @@ function EducationCard({ edu, isDark, onChange, onDelete }: {
   );
 }
 
-/* ─── Live Preview Document ──────────────────────────────────── */
-function LivePreviewDocument({ cv, template }: { cv: CvData; template: TemplateId }) {
-  const allSkills = cv.skills.map(s => s.name);
+/* ─── Gap Analysis helpers ───────────────────────────────────── */
+const CERT_KEYWORDS = ['certificate', 'licence', 'license', 'certified', 'qualification', 'cscs', 'ipaf', 'nebosh', 'diploma', 'accreditation'];
 
-  if (template === 'sidebar') {
-    return (
-      <div style={{
-        width: 794, minHeight: 1123, background: '#FFFFFF', fontFamily: 'Inter, sans-serif',
-        display: 'flex', flexDirection: 'row',
-      }}>
-        {/* Sidebar */}
-        <div style={{
-          width: '30%', background: '#0F172A', color: '#F8FAFC', padding: 28,
-          display: 'flex', flexDirection: 'column', gap: 20,
-        }}>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.3, marginBottom: 4 }}>{cv.personal.fullName}</div>
-            <div style={{ fontSize: 10, color: '#94A3B8', lineHeight: 1.5 }}>
-              {cv.personal.email}<br />
-              {cv.personal.phone}<br />
-              {cv.personal.location}
-            </div>
-            {cv.personal.linkedin && <div style={{ fontSize: 10, color: '#3B82F6', marginTop: 4 }}>{cv.personal.linkedin}</div>}
-            {cv.personal.portfolio && <div style={{ fontSize: 10, color: '#3B82F6' }}>{cv.personal.portfolio}</div>}
-          </div>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, borderBottom: '1px solid rgba(148,163,184,0.3)', paddingBottom: 4 }}>Skills</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {allSkills.map(s => (
-                <span key={s} style={{ fontSize: 10, lineHeight: 1.4 }}>{s}</span>
-              ))}
-            </div>
-          </div>
-          {cv.showCertifications && cv.certifications.length > 0 && (
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, borderBottom: '1px solid rgba(148,163,184,0.3)', paddingBottom: 4 }}>Certifications</div>
-              {cv.certifications.map(c => (
-                <span key={c.id} style={{ fontSize: 10, lineHeight: 1.5, display: 'block' }}>{c.label}</span>
-              ))}
-            </div>
-          )}
-        </div>
-        {/* Main content */}
-        <div style={{ width: '70%', padding: 28 }}>
-          {cv.summary && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid #E2E8F0', paddingBottom: 4, marginBottom: 6 }}>Professional Summary</div>
-              <p style={{ fontSize: 11, color: '#374151', lineHeight: 1.5, margin: 0 }}>{cv.summary}</p>
-            </div>
-          )}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid #E2E8F0', paddingBottom: 4, marginBottom: 6 }}>Work Experience</div>
-            {cv.workHistory.map(w => (
-              <div key={w.id} style={{ marginBottom: 12 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#0F172A' }}>{w.title}</span>
-                  <span style={{ fontSize: 10, color: '#64748B' }}>{w.startDate} – {w.endDate}</span>
-                </div>
-                <div style={{ fontSize: 11, fontStyle: 'italic', color: '#64748B', marginBottom: 4 }}>{w.company}</div>
-                <ul style={{ margin: 0, paddingLeft: 14 }}>
-                  {w.bullets.filter(b => b.text).map(b => (
-                    <li key={b.id} style={{ fontSize: 11, color: '#374151', lineHeight: 1.5, listStyleType: 'disc' }}>{b.text}</li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid #E2E8F0', paddingBottom: 4, marginBottom: 6 }}>Education</div>
-            {cv.education.map(e => (
-              <div key={e.id} style={{ marginBottom: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#0F172A' }}>{e.qualification}</span>
-                  <span style={{ fontSize: 10, color: '#64748B' }}>{e.dates}</span>
-                </div>
-                <div style={{ fontSize: 11, color: '#64748B' }}>{e.institution}{e.grade ? ` · ${e.grade}` : ''}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
+function detectGapType(term: string): 'certification' | 'skill' | 'experience' {
+  const lower = term.toLowerCase();
+  if (CERT_KEYWORDS.some(k => lower.includes(k))) return 'certification';
+  if (term.trim().split(/\s+/).length <= 3 && !/experience|year|manage/i.test(term)) return 'skill';
+  return 'experience';
+}
 
-  if (template === 'minimal') {
-    return (
-      <div style={{ width: 794, minHeight: 1123, background: '#FFFFFF', padding: 36, fontFamily: 'Inter, sans-serif' }}>
-        <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.01em' }}>{cv.personal.fullName}</div>
-          <div style={{ fontSize: 11, color: '#64748B', marginTop: 4, display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
-            {[cv.personal.email, cv.personal.phone, cv.personal.location].filter(Boolean).map((item, i) => (
-              <span key={i}>{i > 0 && <span style={{ margin: '0 4px', color: '#CBD5E1' }}>|</span>}{item}</span>
-            ))}
-          </div>
-        </div>
-        <div style={{ height: 1, background: '#E2E8F0', margin: '0 0 16px' }} />
-        {cv.summary && (
-          <>
-            <p style={{ fontSize: 11, color: '#374151', lineHeight: 1.6, margin: '0 0 16px' }}>{cv.summary}</p>
-            <div style={{ height: 1, background: '#E2E8F0', margin: '0 0 16px' }} />
-          </>
-        )}
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Skills</div>
-        <p style={{ fontSize: 11, color: '#374151', lineHeight: 1.5, margin: '0 0 16px' }}>{allSkills.join(' · ')}</p>
-        <div style={{ height: 1, background: '#E2E8F0', margin: '0 0 16px' }} />
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Experience</div>
-        {cv.workHistory.map(w => (
-          <div key={w.id} style={{ marginBottom: 14 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A' }}>{w.title}</span>
-              <span style={{ fontSize: 10, color: '#64748B' }}>{w.startDate} – {w.endDate}</span>
-            </div>
-            <div style={{ fontSize: 11, color: '#64748B', marginBottom: 4 }}>{w.company}</div>
-            {w.bullets.filter(b => b.text).map(b => (
-              <div key={b.id} style={{ fontSize: 11, color: '#374151', lineHeight: 1.5, paddingLeft: 12, position: 'relative' }}>
-                <span style={{ position: 'absolute', left: 0 }}>–</span>{b.text}
-              </div>
-            ))}
-          </div>
-        ))}
-        <div style={{ height: 1, background: '#E2E8F0', margin: '0 0 16px' }} />
-        <div style={{ fontSize: 10, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Education</div>
-        {cv.education.map(e => (
-          <div key={e.id} style={{ marginBottom: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A' }}>{e.qualification}</span>
-              <span style={{ fontSize: 10, color: '#64748B' }}>{e.dates}</span>
-            </div>
-            <div style={{ fontSize: 11, color: '#64748B' }}>{e.institution}{e.grade ? ` · ${e.grade}` : ''}</div>
-          </div>
-        ))}
-      </div>
-    );
-  }
+function gapPlaceholder(term: string, type: 'certification' | 'skill' | 'experience'): string {
+  if (type === 'certification') return `Do you hold this? Any details (date obtained, number, etc.)?`;
+  if (type === 'skill') return `Briefly describe your experience with ${term}...`;
+  return `Which role involved this? Any details to include?`;
+}
 
-  // Default: clean template
+interface GapAnalysisProps {
+  isDark: boolean;
+  skillsGap: string[];
+  applicationId: string | null;
+  generatedCvId: string | undefined;
+  onPatchApplied: (patch: any, gapTerm: string) => void;
+}
+
+/* ─── Gap Analysis Section ───────────────────────────────────── */
+function GapAnalysisSection({ isDark, skillsGap, applicationId, generatedCvId, onPatchApplied }: GapAnalysisProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [dismissing, setDismissing] = useState<Set<string>>(new Set());
+  const [activeGap, setActiveGap] = useState<string | null>(null);
+  const [userInput, setUserInput] = useState('');
+  const [loading, setLoading] = useState<string | null>(null);
+  const [successGap, setSuccessGap] = useState<string | null>(null);
+  const [errorGap, setErrorGap] = useState<string | null>(null);
+
+  const visibleGaps = (skillsGap || []).filter(g => !dismissed.has(g));
+  const hasGaps = visibleGaps.length > 0;
+
+  const handleDismiss = (gap: string) => {
+    setDismissing(prev => new Set(prev).add(gap));
+    setTimeout(() => {
+      setDismissed(prev => new Set(prev).add(gap));
+      setDismissing(prev => { const n = new Set(prev); n.delete(gap); return n; });
+    }, 200);
+  };
+
+  const handleAddToCv = async (gap: string) => {
+    if (!applicationId || !generatedCvId) {
+      setErrorGap(gap);
+      return;
+    }
+    setLoading(gap);
+    setErrorGap(null);
+    const gapType = detectGapType(gap);
+
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token || '';
+      const res = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-3bbff5cf/patch-cv-gap`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${publicAnonKey}`,
+            'apikey': publicAnonKey,
+            'X-User-Token': token,
+          },
+          body: JSON.stringify({
+            application_id: applicationId,
+            generated_cv_id: generatedCvId,
+            gap_term: gap,
+            gap_type: gapType,
+            user_context: userInput,
+          }),
+        },
+      );
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        console.error('[Gap patch] error:', result);
+        setErrorGap(gap);
+        setLoading(null);
+        return;
+      }
+
+      // Success — flash green then remove
+      setLoading(null);
+      setActiveGap(null);
+      setUserInput('');
+      setSuccessGap(gap);
+
+      // Apply patch to parent cvData
+      onPatchApplied(result.patch, gap);
+
+      setTimeout(() => {
+        setSuccessGap(null);
+        setDismissed(prev => new Set(prev).add(gap));
+      }, 400);
+    } catch (err) {
+      console.error('[Gap patch] network error:', err);
+      setErrorGap(gap);
+      setLoading(null);
+    }
+  };
+
+  const secondaryText = isDark ? '#94A3B8' : '#64748B';
+
   return (
-    <div style={{ width: 794, minHeight: 1123, background: '#FFFFFF', padding: 32, fontFamily: 'Georgia, serif' }}>
+    <div style={{ ...cardStyle(isDark), transition: 'background 0.2s, border-color 0.2s, box-shadow 0.6s' }}>
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+        onClick={() => setExpanded(v => !v)}
+      >
+        <p style={{ ...sectionLabelStyle(isDark), flex: 1, margin: 0 }}>Gap Analysis</p>
+        <button
+          aria-label="Toggle gap analysis"
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: secondaryText, padding: 4, display: 'flex', lineHeight: 1,
+          }}
+        >
+          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+      </div>
+
+      {expanded && (
+        <div style={{ marginTop: 16 }}>
+          {!hasGaps && !skillsGap?.length ? (
+            <p style={{
+              fontSize: 13, fontFamily: font, fontWeight: 500,
+              color: '#10B981', margin: 0, lineHeight: 1.5,
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <CheckCircle2 size={14} />
+              No significant gaps identified for this role
+            </p>
+          ) : !hasGaps ? (
+            <p style={{
+              fontSize: 13, fontFamily: font, fontWeight: 500,
+              color: '#10B981', margin: 0, lineHeight: 1.5,
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <CheckCircle2 size={14} />
+              All gaps addressed
+            </p>
+          ) : (
+            <>
+              <p style={{
+                fontSize: 12, fontFamily: font, fontWeight: 400,
+                color: secondaryText, margin: '0 0 12px', lineHeight: 1.5,
+              }}>
+                These requirements from the job aren't fully evidenced in your CV. You can add missing experience or dismiss items you don't have.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {visibleGaps.map((gap) => {
+                  const isActive = activeGap === gap;
+                  const isLoading = loading === gap;
+                  const isSuccess = successGap === gap;
+                  const isDismissing = dismissing.has(gap);
+                  const isError = errorGap === gap;
+                  const gapType = detectGapType(gap);
+
+                  return (
+                    <div
+                      key={gap}
+                      style={{
+                        padding: isDismissing ? 0 : '8px 10px',
+                        borderRadius: 8,
+                        background: isSuccess
+                          ? 'rgba(16,185,129,0.08)'
+                          : (isDark ? 'rgba(148,163,184,0.04)' : 'rgba(148,163,184,0.06)'),
+                        border: isSuccess
+                          ? '1px solid rgba(16,185,129,0.25)'
+                          : '1px solid transparent',
+                        opacity: isDismissing ? 0 : 1,
+                        maxHeight: isDismissing ? 0 : 500,
+                        overflow: 'hidden',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      {/* Gap label row */}
+                      <div style={{
+                        fontSize: 13, fontFamily: font, fontWeight: 400,
+                        color: isDark ? '#F8FAFC' : '#0F172A', lineHeight: 1.6,
+                        display: 'flex', alignItems: 'center', gap: 8,
+                      }}>
+                        <span style={{ color: isSuccess ? '#10B981' : '#F59E0B', fontSize: 8, lineHeight: 1, flexShrink: 0 }}>
+                          {isSuccess ? '✓' : '●'}
+                        </span>
+                        <span style={{ flex: 1 }}>{gap}</span>
+                      </div>
+
+                      {/* Action buttons — shown when NOT active and NOT loading */}
+                      {!isActive && !isLoading && !isSuccess && (
+                        <div style={{ display: 'flex', gap: 6, marginTop: 6, marginLeft: 16 }}>
+                          <button
+                            onClick={() => { setActiveGap(gap); setUserInput(''); setErrorGap(null); }}
+                            style={{
+                              fontSize: 11, color: '#1A56DB', fontWeight: 500, fontFamily: font,
+                              background: 'rgba(26,86,219,0.08)',
+                              border: '1px solid rgba(26,86,219,0.2)',
+                              borderRadius: 6, padding: '3px 10px', cursor: 'pointer',
+                              display: 'flex', alignItems: 'center', gap: 4,
+                              transition: 'background 0.15s',
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(26,86,219,0.15)')}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'rgba(26,86,219,0.08)')}
+                          >
+                            <Plus size={10} strokeWidth={2.5} /> Add to CV
+                          </button>
+                          <button
+                            onClick={() => handleDismiss(gap)}
+                            style={{
+                              fontSize: 11, color: '#6B7280', fontWeight: 400, fontFamily: font,
+                              background: 'transparent',
+                              border: '1px solid rgba(107,114,128,0.2)',
+                              borderRadius: 6, padding: '3px 10px', cursor: 'pointer',
+                              display: 'flex', alignItems: 'center', gap: 4,
+                              transition: 'color 0.15s',
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.color = '#9CA3AF')}
+                            onMouseLeave={e => (e.currentTarget.style.color = '#6B7280')}
+                          >
+                            <X size={10} /> I don't have this
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Inline input — shown when active */}
+                      {isActive && !isLoading && (
+                        <div style={{ marginTop: 8, marginLeft: 16 }}>
+                          <textarea
+                            placeholder={gapPlaceholder(gap, gapType)}
+                            value={userInput}
+                            onChange={e => setUserInput(e.target.value)}
+                            rows={2}
+                            style={{
+                              width: '100%', padding: '8px 10px',
+                              background: isDark ? '#1E293B' : '#FFFFFF',
+                              color: isDark ? '#F8FAFC' : '#0F172A',
+                              border: `1px solid ${isDark ? 'rgba(148,163,184,0.2)' : 'rgba(148,163,184,0.35)'}`,
+                              borderRadius: 8, fontSize: 13, fontFamily: font, fontWeight: 400,
+                              outline: 'none', resize: 'vertical', lineHeight: 1.5,
+                              transition: 'border-color 0.15s, box-shadow 0.15s',
+                            }}
+                            onFocus={e => { e.currentTarget.style.borderColor = '#1A56DB'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(26,86,219,0.25)'; }}
+                            onBlur={e => { e.currentTarget.style.borderColor = isDark ? 'rgba(148,163,184,0.2)' : 'rgba(148,163,184,0.35)'; e.currentTarget.style.boxShadow = 'none'; }}
+                          />
+                          <p style={{ fontSize: 11, fontFamily: font, color: secondaryText, margin: '4px 0 8px', lineHeight: 1.4 }}>
+                            Optional — leave blank and the AI will make a reasonable addition based on your CV context.
+                          </p>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button
+                              onClick={() => handleAddToCv(gap)}
+                              style={{
+                                fontSize: 12, fontWeight: 500, fontFamily: font,
+                                background: '#1A56DB', color: '#FFFFFF', border: 'none',
+                                borderRadius: 6, padding: '5px 14px', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', gap: 5,
+                                transition: 'background 0.15s, transform 0.1s',
+                              }}
+                              onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
+                              onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+                              onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                            >
+                              Apply with AI <Sparkles size={12} />
+                            </button>
+                            <button
+                              onClick={() => { setActiveGap(null); setUserInput(''); setErrorGap(null); }}
+                              style={{
+                                fontSize: 12, fontWeight: 400, fontFamily: font,
+                                background: 'transparent', color: secondaryText,
+                                border: 'none', padding: '5px 10px', cursor: 'pointer',
+                                transition: 'color 0.15s',
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                          {isError && (
+                            <p style={{ fontSize: 12, fontFamily: font, color: '#EF4444', margin: '6px 0 0', lineHeight: 1.4 }}>
+                              Couldn't update CV — try again
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Loading state */}
+                      {isLoading && (
+                        <div style={{ marginTop: 8, marginLeft: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: '#1A56DB' }} />
+                          <span style={{ fontSize: 12, fontFamily: font, color: secondaryText }}>
+                            Updating CV...
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Page Break Overlay ─────────────────────────────────────── */
+function PageBreakOverlay({ containerWidth }: { containerWidth: number }) {
+  const A4_H = 1123;
+  const ref = useRef<HTMLDivElement>(null);
+  const [pages, setPages] = useState(1);
+
+  useEffect(() => {
+    const el = ref.current?.parentElement;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const h = entry.contentRect.height;
+      setPages(Math.ceil(h / A4_H));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  if (pages <= 1) return <div ref={ref} style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }} />;
+
+  const indicators: JSX.Element[] = [];
+  for (let p = 1; p < pages; p++) {
+    indicators.push(
+      <div key={p} style={{ position: 'absolute', top: A4_H * p, left: 0, right: 0, pointerEvents: 'none', zIndex: 10 }}>
+        <div style={{
+          width: '100%', height: 1,
+          background: 'repeating-linear-gradient(to right, rgba(99,102,241,0.35) 0px, rgba(99,102,241,0.35) 6px, transparent 6px, transparent 12px)',
+        }} />
+        <span style={{
+          position: 'absolute', right: 8, top: -8,
+          fontSize: 9, fontWeight: 500, fontFamily: 'Inter, sans-serif',
+          color: 'rgba(99,102,241,0.5)',
+          background: '#FFFFFF', padding: '1px 4px', borderRadius: 2,
+          lineHeight: 1,
+        }}>
+          p.{p + 1}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={ref} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none' }}>
+      {indicators}
+    </div>
+  );
+}
+
+/* ─── Live Preview Document ──────────────────────────────────── */
+function LivePreviewDocument({ cv }: { cv: CvData }) {
+  const allSkills = cv.skills.map(s => s.name);
+  return (
+    <div id="cv-document" style={{ width: 794, minHeight: 1123, background: '#FFFFFF', padding: '48px 48px 64px', fontFamily: 'Georgia, serif' }}>
       {/* Name & contact */}
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: '#0F172A', fontFamily: 'Inter, sans-serif' }}>{cv.personal.fullName}</div>
@@ -756,7 +1116,14 @@ function LivePreviewDocument({ cv, template }: { cv: CvData; template: TemplateI
       {/* Skills */}
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid #E2E8F0', paddingBottom: 4, marginBottom: 6, fontFamily: 'Inter, sans-serif' }}>Skills</div>
-        <p style={{ fontSize: 11, color: '#374151', lineHeight: 1.5, margin: 0, fontFamily: 'Inter, sans-serif' }}>{allSkills.join(', ')}</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '2px 8px', marginTop: 4, fontFamily: 'Inter, sans-serif' }}>
+          {allSkills.map((skill, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 10, color: '#4B5563', lineHeight: '16px', padding: '1px 0' }}>
+              <span style={{ fontSize: 10, marginTop: 1, flexShrink: 0, color: '#6B7280' }}>•</span>
+              <span style={{ wordBreak: 'break-word', overflow: 'hidden' }}>{skill}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Work History */}
@@ -805,32 +1172,38 @@ function LivePreviewDocument({ cv, template }: { cv: CvData; template: TemplateI
   );
 }
 
+
+
 /* ═══════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════ */
 export function CvEditorScreen() {
   const navigate = useNavigate();
+  const { goBack } = useNavigation();
   const [searchParams] = useSearchParams();
   const { id: generatedCvId } = useParams<{ id: string }>();
   const [jobTitle, setJobTitle] = useState(searchParams.get('job') || 'Software Engineer');
   const [company, setCompany] = useState(searchParams.get('company') || 'Acme Corp');
   const [applicationId, setApplicationId] = useState<string | null>(searchParams.get('appId') || null);
+  const [jobDescriptionRaw, setJobDescriptionRaw] = useState<string>('');
   const [isLoadingCv, setIsLoadingCv] = useState(!!generatedCvId);
 
   /* ─── Theme ───────────────────────────────────────────────── */
   const [theme, setTheme] = useState<Theme>(() =>
-    (typeof window !== 'undefined' && (localStorage.getItem('jobbo-theme') as Theme)) || 'dark'
+    (typeof window !== 'undefined' && (localStorage.getItem('applyly-theme') as Theme)) || 'light'
   );
   const isDark = theme === 'dark';
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('jobbo-theme', theme);
+    localStorage.setItem('applyly-theme', theme);
   }, [theme]);
 
   /* ─── CV Data ─────────────────────────────────────────────── */
   const [cv, setCv] = useState<CvData>(INITIAL_CV);
   const [savedCv, setSavedCv] = useState<CvData>(INITIAL_CV);
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('clean');
+  /* ─── Plan gating ─────────────────────────────────────────── */
+  const { planTier } = useUserPlan();
+  const isPro = planTier === 'pro';
 
   /* ─── Load Generated CV by ID ──────────────────────────────── */
   useEffect(() => {
@@ -898,12 +1271,13 @@ export function CvEditorScreen() {
             })),
             showCertifications: (raw.certifications || []).length > 0,
           };
+          console.log('[CV Editor] loaded cv_json skills:', (raw.skills || []));
           setCv(loaded);
           setSavedCv(loaded);
-          if (data.template) setSelectedTemplate(data.template as TemplateId);
           if (data.job_title) setJobTitle(data.job_title);
           if (data.company) setCompany(data.company);
           if (data.application_id) setApplicationId(data.application_id);
+          if (data.job_description_raw) setJobDescriptionRaw(data.job_description_raw);
         } else {
           console.error('Failed to load generated CV:', data);
         }
@@ -917,6 +1291,27 @@ export function CvEditorScreen() {
     loadGeneratedCv();
     return () => { cancelled = true; };
   }, [generatedCvId]);
+
+  /* ─── Fetch job description when we have applicationId but no generatedCvId */
+  useEffect(() => {
+    if (generatedCvId || !applicationId || jobDescriptionRaw) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/application-data/${applicationId}`,
+          { headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'apikey': publicAnonKey } },
+        );
+        const data = await res.json();
+        if (!cancelled && data.success && data.application?.job_description_raw) {
+          setJobDescriptionRaw(data.application.job_description_raw);
+        }
+      } catch (err) {
+        console.error('Error fetching job description for ATS scorer:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [applicationId, generatedCvId, jobDescriptionRaw]);
 
   /* ─── Save State ──────────────────────────────────────────── */
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
@@ -943,10 +1338,6 @@ export function CvEditorScreen() {
     }, 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [cv]);
-
-  /* ─── ATS Match ───────────────────────────────────────────── */
-  const atsMatch = useMemo(() => calcAtsMatch(cv.skills), [cv.skills]);
-  const atsColor = atsMatch >= 80 ? '#10B981' : atsMatch >= 60 ? '#F59E0B' : '#EF4444';
 
   /* ─── Preview Scale ───────────────────────────────────────── */
   const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -1024,7 +1415,11 @@ export function CvEditorScreen() {
   };
   const updateSummary = (value: string) => setCv(prev => ({ ...prev, summary: value }));
   const removeSkill = (id: string) => setCv(prev => ({ ...prev, skills: prev.skills.filter(s => s.id !== id) }));
-  const addSkill = (name: string) => setCv(prev => ({ ...prev, skills: [...prev.skills, { id: uid(), name, type: 'general' }] }));
+  const addSkill = (name: string) => setCv(prev => {
+    const updated = { ...prev, skills: [...prev.skills, { id: uid(), name, type: 'general' as const }] };
+    console.log('[CV Editor] skill added, cvData.skills:', updated.skills.map(s => s.name));
+    return updated;
+  });
   const addGapSkill = (name: string) => {
     setCv(prev => ({
       ...prev,
@@ -1058,12 +1453,132 @@ export function CvEditorScreen() {
   /* ─── Save ────────────────────────────────────────────────── */
   const handleSave = async () => {
     setSaveState('saving');
-    await new Promise(r => setTimeout(r, 800)); // simulate
+
+    // Convert CvData back to server cv_json format
+    const cvJsonToSave = {
+      name: cv.personal.fullName,
+      email: cv.personal.email,
+      phone: cv.personal.phone,
+      location: cv.personal.location,
+      linkedin: cv.personal.linkedin || null,
+      portfolio: cv.personal.portfolio || null,
+      summary: cv.summary,
+      skills: cv.skills.map(s => s.name),
+      work_history: cv.workHistory.map(w => ({
+        title: w.title,
+        company: w.company,
+        start_date: w.startDate,
+        end_date: w.endDate,
+        bullets: w.bullets.map(b => b.text),
+      })),
+      education: cv.education.map(e => ({
+        institution: e.institution,
+        qualification: e.qualification,
+        dates: e.dates,
+        grade: e.grade || null,
+      })),
+      certifications: cv.certifications.map(cert => cert.url ? { label: cert.label, url: cert.url } : cert.label),
+      links: [],
+      skills_gap: cv.skillsGap,
+    };
+
+    console.log('[CV Editor] saving cv_json:', JSON.stringify(cvJsonToSave));
+    console.log('[CV Editor] skills being saved:', cvJsonToSave.skills);
+
+    if (generatedCvId) {
+      try {
+        const session = await supabase.auth.getSession();
+        const token = session.data.session?.access_token || '';
+        const res = await fetch(
+          `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/generated-cv/${generatedCvId}`,
+          {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${publicAnonKey}`,
+              'apikey': publicAnonKey,
+              'X-User-Token': token,
+            },
+            body: JSON.stringify({
+              cv_json: cvJsonToSave,
+            }),
+          },
+        );
+        const result = await res.json();
+        console.log('[CV Editor] save result:', result);
+
+        if (!result.success) {
+          console.error('[CV Editor] save failed:', result.error);
+          addToast('error', 'Failed to save CV: ' + (result.error || 'Unknown error'));
+          setSaveState('idle');
+          return;
+        }
+      } catch (err) {
+        console.error('[CV Editor] save exception:', err);
+        addToast('error', 'Failed to save CV. Please try again.');
+        setSaveState('idle');
+        return;
+      }
+    }
+
     setSavedCv(cv);
     setSaveState('saved');
     addToast('success', 'CV saved successfully');
     setTimeout(() => setSaveState('idle'), 2000);
   };
+
+  /* ─── Gap Patch Handler ──────────────────────────────────── */
+  const handleSaveRef = useRef(handleSave);
+  handleSaveRef.current = handleSave;
+
+  const handleGapPatch = useCallback((patch: any, gapTerm: string) => {
+    setCv(prev => {
+      const next = { ...prev };
+      switch (patch.patch_type) {
+        case 'add_skill': {
+          const skillName = patch.new_skill || gapTerm;
+          next.skills = [...prev.skills, { id: uid(), name: skillName, type: 'matched' as const }];
+          next.skillsGap = prev.skillsGap.filter(g => g !== gapTerm);
+          break;
+        }
+        case 'add_bullet': {
+          const ri = patch.target_role_index ?? 0;
+          if (prev.workHistory[ri]) {
+            const role = { ...prev.workHistory[ri] };
+            role.bullets = [...role.bullets, { id: uid(), text: patch.new_bullet || '' }];
+            next.workHistory = prev.workHistory.map((w, i) => i === ri ? role : w);
+          }
+          next.skillsGap = prev.skillsGap.filter(g => g !== gapTerm);
+          break;
+        }
+        case 'update_bullet': {
+          const ri2 = patch.target_role_index ?? 0;
+          const bi = patch.bullet_index ?? 0;
+          if (prev.workHistory[ri2] && prev.workHistory[ri2].bullets[bi]) {
+            const role = { ...prev.workHistory[ri2] };
+            role.bullets = role.bullets.map((b, idx) =>
+              idx === bi ? { ...b, text: patch.new_bullet || b.text } : b
+            );
+            next.workHistory = prev.workHistory.map((w, i) => i === ri2 ? role : w);
+          }
+          next.skillsGap = prev.skillsGap.filter(g => g !== gapTerm);
+          break;
+        }
+        case 'add_certification': {
+          const certLabel = patch.new_certification || gapTerm;
+          next.certifications = [...prev.certifications, { id: uid(), label: certLabel, url: '' }];
+          next.showCertifications = true;
+          next.skillsGap = prev.skillsGap.filter(g => g !== gapTerm);
+          break;
+        }
+        default:
+          next.skillsGap = prev.skillsGap.filter(g => g !== gapTerm);
+      }
+      return next;
+    });
+    // Auto-save after a short delay to let state update
+    setTimeout(() => handleSaveRef.current(), 500);
+  }, []);
 
   /* ─── Logout ──────────────────────────────────────────────── */
   const handleLogout = async () => {
@@ -1073,24 +1588,6 @@ export function CvEditorScreen() {
 
   /* ─── PDF Preview Modal ───────────────────────────────────── */
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
-
-  /* ─── Template dropdown ───────────────────────────────────── */
-  const [templateOpen, setTemplateOpen] = useState(false);
-  const templateRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!templateOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (templateRef.current && !templateRef.current.contains(e.target as Node)) setTemplateOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [templateOpen]);
-
-  const TEMPLATES: { id: TemplateId; label: string }[] = [
-    { id: 'clean', label: 'Clean' },
-    { id: 'sidebar', label: 'Sidebar' },
-    { id: 'minimal', label: 'Minimal' },
-  ];
 
   /* ─── Focus ring helper ───────────────────────────────────── */
   const focusHandlers = {
@@ -1117,10 +1614,16 @@ export function CvEditorScreen() {
         @keyframes cve-slide-in { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @keyframes cve-card-in { from { transform: scale(0.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         @keyframes cve-glow { 0%,100% { box-shadow: none; } 50% { box-shadow: 0 0 0 2px #1A56DB; } }
+        @keyframes cve-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        @keyframes cve-pill-exit { to { opacity: 0; transform: scale(0.8); } }
+        @keyframes cve-score-flash-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes cve-score-flash-out { 0% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-4px); } }
+        @keyframes cve-bar-fill { from { width: 0; } }
         .cve-editor::-webkit-scrollbar { width: 6px; }
         .cve-editor::-webkit-scrollbar-track { background: transparent; }
         .cve-editor::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.3); border-radius: 3px; }
         .cve-editor::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.5); }
+        .cve-bullet-row:hover .cve-sparkle-btn { opacity: 1 !important; }
         @media (max-width: 1024px) {
           .cve-split { flex-direction: column !important; min-height: auto !important; }
           .cve-left, .cve-right { width: 100% !important; max-width: 100% !important; }
@@ -1132,6 +1635,12 @@ export function CvEditorScreen() {
             align-items: flex-start !important; padding: 16px !important;
           }
           .cve-divider { display: none !important; }
+          .cve-preview-sizer { width: auto !important; max-width: 100% !important; }
+          .cve-preview-inner {
+            transform: none !important;
+            zoom: var(--preview-scale) !important;
+            width: 794px !important;
+          }
         }
         @media (max-width: 768px) {
           .cve-action-bar {
@@ -1176,12 +1685,13 @@ export function CvEditorScreen() {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         transition: 'background 0.2s, border-color 0.2s',
         flexWrap: 'wrap', gap: 8,
+        position: 'sticky', top: 60, zIndex: 50,
       }}>
         {/* Left: Back + Breadcrumb */}
         <div className="cve-action-left" style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: '1 1 0%' }}>
           {applicationId && (
             <button
-              onClick={() => navigate(`/new-application?appId=${applicationId}`)}
+              onClick={() => goBack(navigate, `/applications/${applicationId}`)}
               aria-label="Back to Application"
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
@@ -1211,69 +1721,8 @@ export function CvEditorScreen() {
           )}
         </div>
 
-        {/* ATS Badge (center) */}
-        <div style={{
-          padding: '4px 12px', borderRadius: 999,
-          background: `${atsColor}20`, color: atsColor,
-          fontSize: 14, fontWeight: 600, fontFamily: font, lineHeight: 1.3,
-          border: `1px solid ${atsColor}40`, whiteSpace: 'nowrap', flexShrink: 0,
-        }}>
-          {atsMatch}% ATS Match
-        </div>
-
         {/* Right actions */}
         <div className="cve-action-right" style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-          {/* Template Selector */}
-          <div ref={templateRef} style={{ position: 'relative' }}>
-            <button
-              onClick={() => setTemplateOpen(v => !v)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                height: 36, padding: '0 12px',
-                background: 'none',
-                border: `1px solid ${isDark ? 'rgba(148,163,184,0.2)' : 'rgba(148,163,184,0.3)'}`,
-                borderRadius: 8, cursor: 'pointer',
-                color: isDark ? '#F8FAFC' : '#0F172A',
-                fontSize: 13, fontWeight: 500, fontFamily: font, lineHeight: 1,
-                transition: 'border-color 0.15s',
-              }}
-            >
-              <FileText size={14} />
-              {TEMPLATES.find(t => t.id === selectedTemplate)?.label}
-              <ChevronDown size={13} style={{ color: isDark ? '#94A3B8' : '#64748B' }} />
-            </button>
-            {templateOpen && (
-              <div style={{
-                position: 'absolute', top: 'calc(100% + 6px)', right: 0, width: 160, zIndex: 200,
-                background: isDark ? 'rgba(15,23,42,0.95)' : 'rgba(248,250,252,0.97)',
-                backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
-                border: `1px solid ${isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)'}`,
-                borderRadius: 8, padding: 4,
-                boxShadow: isDark ? '0 8px 32px rgba(0,0,0,0.5)' : '0 8px 32px rgba(15,23,42,0.1)',
-                animation: 'cve-card-in 0.15s ease-out',
-              }}>
-                {TEMPLATES.map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => { setSelectedTemplate(t.id); setTemplateOpen(false); }}
-                    style={{
-                      display: 'block', width: '100%', textAlign: 'left',
-                      padding: '8px 10px', background: selectedTemplate === t.id ? (isDark ? 'rgba(26,86,219,0.15)' : 'rgba(26,86,219,0.08)') : 'none',
-                      border: 'none', borderRadius: 6, cursor: 'pointer',
-                      color: selectedTemplate === t.id ? '#1A56DB' : isDark ? '#F8FAFC' : '#0F172A',
-                      fontSize: 13, fontWeight: 500, fontFamily: font, lineHeight: 1.3,
-                      transition: 'background 0.12s',
-                    }}
-                    onMouseEnter={e => { if (selectedTemplate !== t.id) e.currentTarget.style.background = isDark ? 'rgba(148,163,184,0.08)' : 'rgba(15,23,42,0.04)'; }}
-                    onMouseLeave={e => { if (selectedTemplate !== t.id) e.currentTarget.style.background = 'none'; }}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
           {/* Preview PDF */}
           <button
             onClick={() => setPdfPreviewOpen(true)}
@@ -1472,40 +1921,8 @@ export function CvEditorScreen() {
             </div>
           </div>
 
-          {/* SKILLS GAP BANNER */}
-          {cv.skillsGap.length > 0 && (
-            <div style={{
-              background: 'rgba(245,158,11,0.08)',
-              borderLeft: '3px solid #F59E0B',
-              borderRadius: 8, padding: '12px 16px',
-              display: 'flex', alignItems: 'flex-start', gap: 10,
-            }}>
-              <AlertTriangle size={16} color="#F59E0B" style={{ flexShrink: 0, marginTop: 2 }} />
-              <div style={{ fontSize: 13, fontFamily: font, color: isDark ? '#F8FAFC' : '#0F172A', lineHeight: 1.5 }}>
-                <span>Missing keywords from this job: </span>
-                {cv.skillsGap.map((skill, i) => (
-                  <span key={skill}>
-                    <button
-                      onClick={() => addGapSkill(skill)}
-                      style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        color: '#F59E0B', fontWeight: 700, fontFamily: font, fontSize: 13,
-                        padding: 0, textDecoration: 'underline', lineHeight: 1.5,
-                      }}
-                    >
-                      {skill}
-                    </button>
-                    {i < cv.skillsGap.length - 1 && ', '}
-                  </span>
-                ))}
-                <span style={{ color: '#1A56DB', fontWeight: 500, marginLeft: 4, cursor: 'pointer' }}
-                  onClick={() => highlightSection('skills')}
-                >
-                  Add them above ↑
-                </span>
-              </div>
-            </div>
-          )}
+          {/* Skills gap banner removed — ATS Recommendations Panel below now covers
+             missing keywords with AI-extracted terms, score deltas, and click-to-add */}
 
           {/* WORK EXPERIENCE */}
           <div ref={el => { sectionRefs.current['work'] = el; }} style={{ ...cardStyle(isDark), transition: 'background 0.2s, border-color 0.2s, box-shadow 0.6s' }}>
@@ -1523,7 +1940,7 @@ export function CvEditorScreen() {
               </button>
             </div>
             {cv.workHistory.map(role => (
-              <RoleCard key={role.id} role={role} isDark={isDark} onChange={updateRole} onDelete={() => deleteRole(role.id)} />
+              <RoleCard key={role.id} role={role} isDark={isDark} onChange={updateRole} onDelete={() => deleteRole(role.id)} jobTitle={jobTitle} jobDescription={jobDescriptionRaw} />
             ))}
             {cv.workHistory.length === 0 && (
               <div style={{ textAlign: 'center', padding: '24px 0', color: isDark ? '#64748B' : '#94A3B8', fontSize: 13, fontFamily: font }}>
@@ -1624,6 +2041,15 @@ export function CvEditorScreen() {
             )}
           </div>
 
+          {/* GAP ANALYSIS */}
+          <GapAnalysisSection
+            isDark={isDark}
+            skillsGap={cv.skillsGap}
+            applicationId={applicationId}
+            generatedCvId={generatedCvId}
+            onPatchApplied={handleGapPatch}
+          />
+
           {/* Bottom spacer */}
           <div style={{ height: 48 }} />
         </div>
@@ -1640,9 +2066,13 @@ export function CvEditorScreen() {
           className="cve-right"
           style={{
             width: '42%', position: 'sticky', top: 60, height: 'calc(100vh - 116px)',
-            overflow: 'hidden', padding: 16,
+            overflowY: isZoomedIn ? 'hidden' : 'auto',
+            overflowX: 'hidden',
+            padding: '24px 16px 48px',
             display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
             cursor: isZoomedIn ? 'grab' : 'default',
+            scrollbarWidth: 'thin' as any,
+            scrollbarColor: 'rgba(148,163,184,0.15) transparent',
           }}
           onPointerDown={handlePreviewPointerDown}
           onPointerMove={handlePreviewPointerMove}
@@ -1652,9 +2082,9 @@ export function CvEditorScreen() {
           <div
             className="cve-preview-sizer"
             style={{
+              ['--preview-scale' as any]: previewScale,
               width: 794 * previewScale,
-              height: 1123 * previewScale,
-              overflow: 'hidden',
+              overflow: 'visible',
               flexShrink: 0,
               position: 'relative',
               transform: isZoomedIn ? `translate(${panOffset.x}px, ${panOffset.y}px)` : undefined,
@@ -1667,13 +2097,16 @@ export function CvEditorScreen() {
               transform: `scale(${previewScale})`,
               transition: 'opacity 0.15s',
               opacity: previewOpacity,
-              boxShadow: '0 2px 16px rgba(0,0,0,0.15)',
+              boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
               borderRadius: 4,
-              overflow: 'hidden',
+              overflow: 'visible',
               width: 794,
+              position: 'relative',
               pointerEvents: isZoomedIn ? 'none' : undefined,
             }}>
-              <LivePreviewDocument cv={previewCv} template={selectedTemplate} />
+              <LivePreviewDocument cv={previewCv} />
+              {/* Page break indicators */}
+              <PageBreakOverlay containerWidth={794} />
             </div>
           </div>
 
@@ -1760,8 +2193,6 @@ export function CvEditorScreen() {
         isOpen={pdfPreviewOpen}
         onClose={() => setPdfPreviewOpen(false)}
         cv={previewCv}
-        selectedTemplate={selectedTemplate}
-        onTemplateChange={setSelectedTemplate}
         isDark={isDark}
         jobTitle={jobTitle}
         company={company}

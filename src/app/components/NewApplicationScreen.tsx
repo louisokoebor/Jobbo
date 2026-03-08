@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router';
 import {
   ChevronDown, Lock,
   Loader2, CheckCircle2, AlertTriangle, AlertCircle,
-  Plus, ArrowRight, FileSearch,
+  Plus, ArrowRight, FileSearch, Sparkles,
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { projectId, publicAnonKey } from '../lib/supabaseClient';
 import { UpgradeModal } from './UpgradeModal';
 import { SharedNavbar } from './SharedNavbar';
 
@@ -43,7 +43,6 @@ interface ParsedJob {
   responsibilities: string[];
   nice_to_haves: string[];
   key_skills: string[];
-  atsMatch: number; // calculated client-side
 }
 
 interface ToastItem {
@@ -772,7 +771,6 @@ function RightPanelLoaded({ job, isDark }: { job: ParsedJob; isDark: boolean }) 
   const borderColor = isDark ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.2)';
 
   const visibleResp = showAllResp ? job.responsibilities : job.responsibilities.slice(0, 5);
-  const atsColor = job.atsMatch >= 80 ? '#10B981' : job.atsMatch >= 60 ? '#F59E0B' : '#EF4444';
 
   return (
     <div style={{
@@ -885,25 +883,18 @@ function RightPanelLoaded({ job, isDark }: { job: ParsedJob; isDark: boolean }) 
         </>
       )}
 
-      {/* ATS Match pill */}
+      {/* Motivational prompt */}
       <div style={{ marginTop: 16 }}>
         <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          padding: '8px 14px', borderRadius: 999,
-          background: 'rgba(26,86,219,0.1)',
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '10px 16px', borderRadius: 999,
+          background: 'rgba(26,86,219,0.08)',
           border: '1px solid rgba(26,86,219,0.2)',
+          width: 'fit-content',
         }}>
-          <span style={{
-            fontSize: 13, fontWeight: 500, fontFamily: 'Inter, sans-serif',
-            color: isDark ? '#94A3B8' : '#64748B', lineHeight: 1,
-          }}>
-            Estimated ATS match:
-          </span>
-          <span style={{
-            fontSize: 14, fontWeight: 700, fontFamily: 'Inter, sans-serif',
-            color: atsColor, lineHeight: 1,
-          }}>
-            ~{job.atsMatch}%
+          <Sparkles size={14} color="#1A56DB" />
+          <span style={{ fontSize: 13, fontWeight: 500, color: '#1A56DB' }}>
+            Generate a tailored CV to match this role
           </span>
         </div>
       </div>
@@ -1003,13 +994,13 @@ export function NewApplicationScreen() {
   const navigate = useNavigate();
 
   const [theme, setTheme] = useState<Theme>(() =>
-    (typeof window !== 'undefined' && (localStorage.getItem('jobbo-theme') as Theme)) || 'dark'
+    (typeof window !== 'undefined' && (localStorage.getItem('applyly-theme') as Theme)) || 'light'
   );
   const isDark = theme === 'dark';
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('jobbo-theme', theme);
+    localStorage.setItem('applyly-theme', theme);
   }, [theme]);
 
   /* ── CV Profiles (real data) ── */
@@ -1048,6 +1039,8 @@ export function NewApplicationScreen() {
   const [generateState, setGenerateState] = useState<GenerateState>('idle');
   const [generateStatusIndex, setGenerateStatusIndex] = useState(0);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [upgradeUsed, setUpgradeUsed] = useState(3);
+  const [upgradeMax, setUpgradeMax] = useState(3);
 
   /* ── CV Upload state ── */
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1118,32 +1111,7 @@ export function NewApplicationScreen() {
 
         setApplicationId(appRow.id);
 
-        /* Calculate ATS match score */
-        let atsMatch = 75;
-        if (selectedCvId && selectedCvId !== 'upload') {
-          try {
-            const { data: cvProfile } = await supabase
-              .from('cv_profiles')
-              .select('parsed_json')
-              .eq('id', selectedCvId)
-              .single();
-
-            if (cvProfile?.parsed_json?.skills) {
-              const cvSkills: string[] = cvProfile.parsed_json.skills.map((s: string) => s.toLowerCase());
-              const jobSkills: string[] = (result.parsed.key_skills ?? []).map((s: string) => s.toLowerCase());
-              const matched = jobSkills.filter((s: string) =>
-                cvSkills.some(cs => cs.includes(s) || s.includes(cs))
-              );
-              atsMatch = jobSkills.length > 0
-                ? Math.round((matched.length / jobSkills.length) * 100)
-                : 75;
-            }
-          } catch (err) {
-            console.error('Error calculating ATS match:', err);
-          }
-        }
-
-        setParsedJob({ ...result.parsed, atsMatch });
+        setParsedJob(result.parsed);
         return true;
 
       } else if (result.error === 'not_a_job_description') {
@@ -1292,7 +1260,9 @@ export function NewApplicationScreen() {
             console.log('Background analysis failed silently:', e)
           }
         })()
-      } else if (response.status === 403 || result.upgrade_required === true) {
+      } else if (response.status === 403 || result.upgrade_required === true || result.code === 'GENERATION_LIMIT_REACHED') {
+        if (result.used !== undefined) setUpgradeUsed(result.used);
+        if (result.limit !== undefined) setUpgradeMax(result.limit);
         setShowUpgradeModal(true);
       } else {
         console.error('generate-cv error:', result);
@@ -1719,7 +1689,7 @@ export function NewApplicationScreen() {
 
       {/* Upgrade modal */}
       {showUpgradeModal && (
-        <UpgradeModal isDark={isDark} onClose={() => setShowUpgradeModal(false)} />
+        <UpgradeModal isDark={isDark} onClose={() => setShowUpgradeModal(false)} used={upgradeUsed} max={upgradeMax} />
       )}
 
       {/* Hidden file input — triggered when user picks "Upload new CV" */}

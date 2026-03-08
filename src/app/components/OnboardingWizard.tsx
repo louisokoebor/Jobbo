@@ -4,8 +4,7 @@ import {
   Sun, Moon, Upload, FileText, CheckCircle2, X, AlertTriangle,
   ChevronLeft, ArrowRight, Check, MapPin, Mail, Phone, Briefcase, GraduationCap, User,
 } from 'lucide-react';
-import { supabase } from '../lib/supabaseClient';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { supabase, projectId, publicAnonKey } from '../lib/supabaseClient';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 type Theme = 'dark' | 'light';
@@ -542,13 +541,13 @@ export function OnboardingWizard() {
 
   /* Theme */
   const [theme, setTheme] = useState<Theme>(() =>
-    (typeof window !== 'undefined' && (localStorage.getItem('jobbo-theme') as Theme)) || 'dark'
+    (typeof window !== 'undefined' && (localStorage.getItem('applyly-theme') as Theme)) || 'light'
   );
   const isDark = theme === 'dark';
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('jobbo-theme', theme);
+    localStorage.setItem('applyly-theme', theme);
   }, [theme]);
 
   /* ── Check if user already completed onboarding (returning Google user) ── */
@@ -914,7 +913,7 @@ export function OnboardingWizard() {
         transition: 'background 0.2s, border-color 0.2s',
       }}>
         <span style={{ fontSize: 20, fontWeight: 700, fontFamily: 'Inter, sans-serif', color: '#1A56DB', letterSpacing: '-0.025em', userSelect: 'none', lineHeight: 1 }}>
-          Jobbo
+          Applyly
         </span>
         <ThemeToggleButton isDark={isDark} onToggle={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} />
       </nav>
