@@ -17,6 +17,7 @@ import {
   Users, ClipboardList, ExternalLink, Pencil,
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 import { toast, Toaster } from 'sonner';
 import { useUserPlan } from '../lib/UserPlanContext';
 import { downloadCvPdf, downloadCoverLetterPdf } from '../lib/pdf-generator.js';
@@ -1001,9 +1002,9 @@ function CoverLetterTabContent({ app, generatedCv, coverLetter, setCoverLetter, 
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { toast.error('Please log in'); setGenerating(false); return; }
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/generate-cover-letter`, {
+      const res = await apiFetch('/make-server-3bbff5cf/generate-cover-letter', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${ANON_KEY}`, 'Content-Type': 'application/json', 'apikey': ANON_KEY, 'X-User-Token': session.access_token },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ application_id: app.id, generated_cv_id: generatedCv.id, tone }),
       });
       const result = await res.json();
@@ -1024,9 +1025,9 @@ function CoverLetterTabContent({ app, generatedCv, coverLetter, setCoverLetter, 
       if (!coverLetter) return;
       setSaveState('saving');
       try {
-        const res = await fetch(`${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/save-cover-letter`, {
+        const res = await apiFetch('/make-server-3bbff5cf/save-cover-letter', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${ANON_KEY}`, 'Content-Type': 'application/json', 'apikey': ANON_KEY },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cover_letter_id: coverLetter.id, application_id: app.id, content: val }),
         });
         const result = await res.json();
@@ -1173,9 +1174,9 @@ function NotesTabContent({ app, initialNotes, isDark }: {
   const saveToDb = async (n: string, d: string, t: string, o: string) => {
     setSaveState('saving');
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/save-notes`, {
+      const res = await apiFetch('/make-server-3bbff5cf/save-notes', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${ANON_KEY}`, 'Content-Type': 'application/json', 'apikey': ANON_KEY },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ application_id: app.id, notes_text: n, interview_date: d || null, interview_type: t || null, outcome: o || null }),
       });
       const result = await res.json();
@@ -1303,16 +1304,11 @@ export function ApplicationDetailPage() {
         return;
       }
 
-      const response = await fetch(
-        `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/analyse-application`,
+      const response = await apiFetch(
+        '/make-server-3bbff5cf/analyse-application',
         {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${ANON_KEY}`,
-            'Content-Type': 'application/json',
-            'apikey': ANON_KEY,
-            'X-User-Token': session.access_token,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             application_id: id,
             generated_cv_id: cvId,
@@ -1350,14 +1346,8 @@ export function ApplicationDetailPage() {
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch(
-          `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/application-data/${id}`,
-          {
-            headers: {
-              'Authorization': `Bearer ${ANON_KEY}`,
-              'apikey': ANON_KEY,
-            },
-          }
+        const res = await apiFetch(
+          `/make-server-3bbff5cf/application-data/${id}`,
         );
 
         if (!res.ok) {

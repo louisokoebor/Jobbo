@@ -5,6 +5,7 @@ import {
   ChevronLeft, ArrowRight, Check, MapPin, Mail, Phone, Briefcase, GraduationCap, User,
 } from 'lucide-react';
 import { supabase, projectId, publicAnonKey } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 type Theme = 'dark' | 'light';
@@ -717,13 +718,10 @@ export function OnboardingWizard() {
       setTimeout(async () => {
         setParsing(true);
         try {
-          const response = await fetch(`${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/parse-cv`, {
+          const response = await apiFetch('/make-server-3bbff5cf/parse-cv', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${publicAnonKey}`,
-              'X-User-Token': accessToken,
               'Content-Type': 'application/json',
-              'apikey': publicAnonKey,
             },
             body: JSON.stringify({
               file_url: fileUrl,

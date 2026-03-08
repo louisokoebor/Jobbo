@@ -18,6 +18,7 @@ import { SharedNavbar } from './SharedNavbar';
 import { useUserPlan } from '../lib/UserPlanContext';
 import { supabase } from '../lib/supabaseClient';
 import { projectId, publicAnonKey } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 
 // @ts-ignore — JS utility
 import { downloadCoverLetterPdf } from '../lib/pdf-generator.js';
@@ -344,14 +345,8 @@ export function CoverLetterScreen() {
     if (!generatedCvId) return;
     (async () => {
       try {
-        const res = await fetch(
-          `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/generated-cv/${generatedCvId}`,
-          {
-            headers: {
-              'Authorization': `Bearer ${publicAnonKey}`,
-              'apikey': publicAnonKey,
-            },
-          }
+        const res = await apiFetch(
+          `/make-server-3bbff5cf/generated-cv/${generatedCvId}`,
         );
         const data = await res.json();
 
@@ -423,16 +418,11 @@ export function CoverLetterScreen() {
         return;
       }
 
-      const response = await fetch(
-        `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/generate-cover-letter`,
+      const response = await apiFetch(
+        '/make-server-3bbff5cf/generate-cover-letter',
         {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'Content-Type': 'application/json',
-            'apikey': publicAnonKey,
-            'X-User-Token': session.access_token,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             application_id: applicationId,
             generated_cv_id: generatedCvId,

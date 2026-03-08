@@ -1,0 +1,328 @@
+-- =============================================
+-- APPLYLY — RLS POLICIES (drop & recreate)
+-- Run in Supabase SQL Editor
+-- =============================================
+
+
+-- =============================================
+-- 1. public.users
+-- =============================================
+alter table public.users enable row level security;
+
+drop policy if exists "users: read own" on public.users;
+drop policy if exists "users: update own safe fields" on public.users;
+
+create policy "users: read own"
+on public.users for select
+to authenticated
+using ((select auth.uid()) = id);
+
+create policy "users: update own safe fields"
+on public.users for update
+to authenticated
+using ((select auth.uid()) = id)
+with check ((select auth.uid()) = id);
+
+
+-- =============================================
+-- 2. public.cv_profiles
+-- =============================================
+alter table public.cv_profiles enable row level security;
+
+drop policy if exists "cv_profiles: read own" on public.cv_profiles;
+drop policy if exists "cv_profiles: insert own" on public.cv_profiles;
+drop policy if exists "cv_profiles: update own" on public.cv_profiles;
+drop policy if exists "cv_profiles: delete own" on public.cv_profiles;
+
+create policy "cv_profiles: read own"
+on public.cv_profiles for select
+to authenticated
+using ((select auth.uid()) = user_id);
+
+create policy "cv_profiles: insert own"
+on public.cv_profiles for insert
+to authenticated
+with check ((select auth.uid()) = user_id);
+
+create policy "cv_profiles: update own"
+on public.cv_profiles for update
+to authenticated
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id);
+
+create policy "cv_profiles: delete own"
+on public.cv_profiles for delete
+to authenticated
+using ((select auth.uid()) = user_id);
+
+
+-- =============================================
+-- 3. public.applications
+-- =============================================
+alter table public.applications enable row level security;
+
+drop policy if exists "applications: read own" on public.applications;
+drop policy if exists "applications: insert own" on public.applications;
+drop policy if exists "applications: update own" on public.applications;
+drop policy if exists "applications: delete own" on public.applications;
+
+create policy "applications: read own"
+on public.applications for select
+to authenticated
+using ((select auth.uid()) = user_id);
+
+create policy "applications: insert own"
+on public.applications for insert
+to authenticated
+with check ((select auth.uid()) = user_id);
+
+create policy "applications: update own"
+on public.applications for update
+to authenticated
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id);
+
+create policy "applications: delete own"
+on public.applications for delete
+to authenticated
+using ((select auth.uid()) = user_id);
+
+
+-- =============================================
+-- 4. public.generated_cvs
+-- =============================================
+alter table public.generated_cvs enable row level security;
+
+drop policy if exists "generated_cvs: read own" on public.generated_cvs;
+drop policy if exists "generated_cvs: insert own" on public.generated_cvs;
+drop policy if exists "generated_cvs: update own" on public.generated_cvs;
+drop policy if exists "generated_cvs: delete own" on public.generated_cvs;
+
+create policy "generated_cvs: read own"
+on public.generated_cvs for select
+to authenticated
+using (
+  exists (
+    select 1 from public.applications a
+    where a.id = generated_cvs.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+create policy "generated_cvs: insert own"
+on public.generated_cvs for insert
+to authenticated
+with check (
+  exists (
+    select 1 from public.applications a
+    where a.id = generated_cvs.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+create policy "generated_cvs: update own"
+on public.generated_cvs for update
+to authenticated
+using (
+  exists (
+    select 1 from public.applications a
+    where a.id = generated_cvs.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+create policy "generated_cvs: delete own"
+on public.generated_cvs for delete
+to authenticated
+using (
+  exists (
+    select 1 from public.applications a
+    where a.id = generated_cvs.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+
+-- =============================================
+-- 5. public.cover_letters
+-- =============================================
+alter table public.cover_letters enable row level security;
+
+drop policy if exists "cover_letters: read own" on public.cover_letters;
+drop policy if exists "cover_letters: insert own" on public.cover_letters;
+drop policy if exists "cover_letters: update own" on public.cover_letters;
+drop policy if exists "cover_letters: delete own" on public.cover_letters;
+
+create policy "cover_letters: read own"
+on public.cover_letters for select
+to authenticated
+using (
+  exists (
+    select 1 from public.applications a
+    where a.id = cover_letters.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+create policy "cover_letters: insert own"
+on public.cover_letters for insert
+to authenticated
+with check (
+  exists (
+    select 1 from public.applications a
+    where a.id = cover_letters.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+create policy "cover_letters: update own"
+on public.cover_letters for update
+to authenticated
+using (
+  exists (
+    select 1 from public.applications a
+    where a.id = cover_letters.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+create policy "cover_letters: delete own"
+on public.cover_letters for delete
+to authenticated
+using (
+  exists (
+    select 1 from public.applications a
+    where a.id = cover_letters.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+
+-- =============================================
+-- 6. public.interview_notes
+-- =============================================
+alter table public.interview_notes enable row level security;
+
+drop policy if exists "interview_notes: read own" on public.interview_notes;
+drop policy if exists "interview_notes: insert own" on public.interview_notes;
+drop policy if exists "interview_notes: update own" on public.interview_notes;
+drop policy if exists "interview_notes: delete own" on public.interview_notes;
+
+create policy "interview_notes: read own"
+on public.interview_notes for select
+to authenticated
+using (
+  exists (
+    select 1 from public.applications a
+    where a.id = interview_notes.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+create policy "interview_notes: insert own"
+on public.interview_notes for insert
+to authenticated
+with check (
+  exists (
+    select 1 from public.applications a
+    where a.id = interview_notes.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+create policy "interview_notes: update own"
+on public.interview_notes for update
+to authenticated
+using (
+  exists (
+    select 1 from public.applications a
+    where a.id = interview_notes.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+create policy "interview_notes: delete own"
+on public.interview_notes for delete
+to authenticated
+using (
+  exists (
+    select 1 from public.applications a
+    where a.id = interview_notes.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+
+-- =============================================
+-- 7. public.application_documents
+-- =============================================
+alter table public.application_documents enable row level security;
+
+drop policy if exists "application_documents: read own" on public.application_documents;
+drop policy if exists "application_documents: insert own" on public.application_documents;
+drop policy if exists "application_documents: delete own" on public.application_documents;
+
+create policy "application_documents: read own"
+on public.application_documents for select
+to authenticated
+using (
+  exists (
+    select 1 from public.applications a
+    where a.id = application_documents.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+create policy "application_documents: insert own"
+on public.application_documents for insert
+to authenticated
+with check (
+  exists (
+    select 1 from public.applications a
+    where a.id = application_documents.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+create policy "application_documents: delete own"
+on public.application_documents for delete
+to authenticated
+using (
+  exists (
+    select 1 from public.applications a
+    where a.id = application_documents.application_id
+      and a.user_id = (select auth.uid())
+  )
+);
+
+
+-- =============================================
+-- 8. public.interview_prep
+-- =============================================
+alter table public.interview_prep enable row level security;
+
+drop policy if exists "interview_prep: read own" on public.interview_prep;
+drop policy if exists "interview_prep: insert own" on public.interview_prep;
+drop policy if exists "interview_prep: update own" on public.interview_prep;
+drop policy if exists "interview_prep: delete own" on public.interview_prep;
+
+create policy "interview_prep: read own"
+on public.interview_prep for select
+to authenticated
+using ((select auth.uid()) = user_id);
+
+create policy "interview_prep: insert own"
+on public.interview_prep for insert
+to authenticated
+with check ((select auth.uid()) = user_id);
+
+create policy "interview_prep: update own"
+on public.interview_prep for update
+to authenticated
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id);
+
+create policy "interview_prep: delete own"
+on public.interview_prep for delete
+to authenticated
+using ((select auth.uid()) = user_id);

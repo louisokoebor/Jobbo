@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { SharedNavbar } from './SharedNavbar';
 import { supabase } from '../lib/supabaseClient';
 import { projectId, publicAnonKey } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 import { useUserPlan } from '../lib/UserPlanContext';
 import {
   KeyRound, Trash2, Upload, CheckCircle2, AlertCircle,
@@ -261,14 +262,9 @@ export function ProfilePage() {
 
       setUploadStatus('reading');
 
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/parse-cv`, {
+      const response = await apiFetch('/make-server-3bbff5cf/parse-cv', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'X-User-Token': accessToken,
-          'Content-Type': 'application/json',
-          'apikey': publicAnonKey,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ file_url: fileUrl, label: file.name.replace(/\.[^/.]+$/, '') }),
       });
 
@@ -355,15 +351,9 @@ export function ProfilePage() {
     if (!userId) return;
     setPortalLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/create-portal-session`, {
+      const res = await apiFetch('/make-server-3bbff5cf/create-portal-session', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'X-User-Token': session?.access_token || '',
-          'Content-Type': 'application/json',
-          'apikey': publicAnonKey,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
       const result = await res.json();
@@ -378,15 +368,9 @@ export function ProfilePage() {
     if (!userId || deleteConfirmText !== 'DELETE') return;
     setIsDeleting(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/delete-account`, {
+      const res = await apiFetch('/make-server-3bbff5cf/delete-account', {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'X-User-Token': session?.access_token || '',
-          'Content-Type': 'application/json',
-          'apikey': publicAnonKey,
-        },
+        headers: { 'Content-Type': 'application/json' },
       });
       const result = await res.json();
       if (result.success) {

@@ -15,6 +15,7 @@ import { SharedNavbar } from './SharedNavbar';
 import { supabase } from '../lib/supabaseClient';
 import { useUserPlan } from '../lib/UserPlanContext';
 import { projectId, publicAnonKey } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 
 /* ─── Constants ──────────────────────────────────────────────── */
 const STRIPE_PRICE_MONTHLY = 'price_1T713fQU76dJHu8oq10BA26E';
@@ -238,13 +239,9 @@ export function BillingPage() {
         ? STRIPE_PRICE_MONTHLY
         : STRIPE_PRICE_ANNUAL;
 
-      const res = await fetch(`${SERVER_URL}/create-checkout-session`, {
+      const res = await apiFetch('/make-server-3bbff5cf/create-checkout-session', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'X-User-Token': token || '',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ priceId, planId }),
       });
 
@@ -267,12 +264,8 @@ export function BillingPage() {
   const handleManage = useCallback(async () => {
     try {
       const token = await getAuthToken();
-      const res = await fetch(`${SERVER_URL}/create-portal-session`, {
+      const res = await apiFetch('/make-server-3bbff5cf/create-portal-session', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'X-User-Token': token || '',
-        },
       });
       const data = await res.json();
       if (data.url) {

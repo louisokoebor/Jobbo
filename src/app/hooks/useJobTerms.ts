@@ -9,6 +9,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { projectId, publicAnonKey } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 
 const SUPABASE_URL = `https://${projectId}.supabase.co`;
 
@@ -68,16 +69,11 @@ export function useJobTerms(
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token;
 
-        const res = await fetch(
-          `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/extract-job-terms`,
+        const res = await apiFetch(
+          '/make-server-3bbff5cf/extract-job-terms',
           {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${publicAnonKey}`,
-              'apikey': publicAnonKey,
-              ...(token ? { 'X-User-Token': token } : {}),
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               application_id: applicationId,
               job_description_raw: jobDescriptionRaw,

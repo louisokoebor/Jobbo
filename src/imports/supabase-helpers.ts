@@ -8,7 +8,7 @@ import { PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1";
 // ── Client factories ─────────────────────────────────────────────────────────
 
 // Admin client — service role, bypasses RLS.
-// Use ONLY for: Stripe webhook, entitlement updates, delete-account, generated_cvs INSERT.
+// Use ONLY for: Stripe webhook, entitlement updates, delete-account auth deletion.
 function sbAdmin() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -30,22 +30,16 @@ function sbUser(jwt: string) {
 
 // Validates the JWT server-side via auth.getUser() — no base64 decode trust.
 // Attaches userId, jwt, and a user-context supabase client to context.
-// Priority: X-User-Token (preferred) > Authorization Bearer (fallback).
-// The frontend sends the anon key in Authorization for gateway routing
-// and the real user JWT in X-User-Token.
 async function requireAuth(c: any, next: any) {
   const authHeader = c.req.header("Authorization");
   const xToken = c.req.header("X-User-Token");
 
   let jwt: string | null = null;
-
-  // 1. Prefer X-User-Token (the dedicated user-JWT header)
-  if (xToken) {
-    jwt = xToken.replace(/^Bearer\s+/i, "").trim();
-  }
-  // 2. Fallback to Authorization header (for backwards compat / direct calls)
-  if (!jwt && authHeader?.startsWith("Bearer ")) {
+  if (authHeader?.startsWith("Bearer ")) {
     jwt = authHeader.slice(7).trim();
+  } else if (xToken && !xToken.startsWith("Bearer ")) {
+    // Back-compat with X-User-Token header
+    jwt = xToken.trim();
   }
 
   if (!jwt) return c.json({ success: false, error: "unauthorized" }, 401);
@@ -69,6 +63,67 @@ async function requireAuth(c: any, next: any) {
   c.set("supabase", supabase);
 
   return next();
+}
+
+// ── Ownership helpers ────────────────────────────────────────────────────────
+
+// Verifies the application belongs to the calling user.
+// Throws a 404 Response if not found or not owned (avoids leaking existence).
+async function assertOwnApplication(supabase: any, userId: string, applicationId: string) {
+  const { data, error } = await supabase
+    .from("applications")
+    .select("id")
+    .eq("id", applicationId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error || !data) {
+    throw new Response(
+      JSON.stringify({ success: false, error: "not_found" }),
+      { status: 404, headers: { "Content-Type": "application/json" } },
+    );
+  }
+}
+
+// Verifies a generated CV belongs to the calling user (via applications.user_id).
+async function assertOwnGeneratedCv(supabase: any, userId: string, cvId: string) {
+  const { data, error } = await supabase
+    .from("generated_cvs")
+    .select("id, application_id, applications!inner(user_id)")
+    .eq("id", cvId)
+    .eq("applications.user_id", userId)
+    .maybeSingle();
+
+  if (error || !data) {
+    // Fallback: two-step check if join syntax not supported
+    const { data: cv } = await supabase
+      .from("generated_cvs")
+      .select("id, application_id")
+      .eq("id", cvId)
+      .maybeSingle();
+
+    if (!cv) {
+      throw new Response(
+        JSON.stringify({ success: false, error: "not_found" }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // Verify application ownership
+    const { data: app } = await supabase
+      .from("applications")
+      .select("id")
+      .eq("id", cv.application_id)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (!app) {
+      throw new Response(
+        JSON.stringify({ success: false, error: "not_found" }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      );
+    }
+  }
 }
 
 // ── App setup ────────────────────────────────────────────────────────────────
@@ -144,7 +199,7 @@ app.post("/make-server-3bbff5cf/create-checkout-session", async (c) => {
   const { priceId, planId } = await c.req.json();
   if (!priceId) return c.json({ success: false, error: "priceId required" }, 400);
 
-  // Read user via user-context (RLS enforces own row)
+  // Read own user row via user-context client (RLS enforced)
   const { data: userData } = await supabase
     .from("users")
     .select("email, stripe_customer_id")
@@ -252,21 +307,30 @@ app.post("/make-server-3bbff5cf/stripe-webhook", async (c) => {
       stripe_customer_id: customerId,
       plan_expires_at: new Date(subscription.current_period_end * 1000).toISOString(),
     };
+    console.log("[webhook] update payload:", JSON.stringify(updatePayload));
 
     const { data: updateData, error: updateError } = await admin.from("users")
       .update(updatePayload)
       .eq("id", userId)
       .select("id, plan_tier, generations_limit");
 
+    console.log("[webhook] update result:", JSON.stringify(updateData));
+    console.log("[webhook] update error:", JSON.stringify(updateError));
+
     if (updateError) {
       console.log("[webhook] ERROR upgrading user:", updateError.message);
     } else if (!updateData || updateData.length === 0) {
       console.log("[webhook] WARNING: no rows matched for userId:", userId, "— attempting match by stripe_customer_id");
-      await admin.from("users").update({
+      const { data: fallbackData, error: fallbackError } = await admin.from("users").update({
         plan_tier: "pro",
         generations_limit: 999,
         plan_expires_at: new Date(subscription.current_period_end * 1000).toISOString(),
-      }).eq("stripe_customer_id", customerId);
+      })
+        .eq("stripe_customer_id", customerId)
+        .select("id, plan_tier, generations_limit");
+
+      console.log("[webhook] fallback update result:", JSON.stringify(fallbackData));
+      console.log("[webhook] fallback update error:", JSON.stringify(fallbackError));
     }
 
     console.log("[Stripe Webhook] upgraded user to pro:", userId);
@@ -414,16 +478,15 @@ app.post("/make-server-3bbff5cf/extract-job-terms", async (c) => {
     return c.json({ success: false, error: "application_id and job_description_raw required" }, 400);
   }
 
-  // RLS enforces ownership — user can only read own applications
+  // Ownership check — user-context client + RLS ensures they own this application
+  try { await assertOwnApplication(supabase, userId, application_id); }
+  catch (r) { return r as Response; }
+
   const { data: existing } = await supabase
     .from("applications")
     .select("extracted_job_terms")
     .eq("id", application_id)
     .single();
-
-  if (!existing) {
-    return c.json({ success: false, error: "Application not found" }, 404);
-  }
 
   if (existing?.extracted_job_terms) {
     console.log("[extract-job-terms] returning cached terms for:", application_id);
@@ -507,8 +570,8 @@ ${job_description_raw.slice(0, 6000)}`;
       experienceYears: typeof terms.experienceYears === "number" ? terms.experienceYears : null,
     };
 
-    // Cache result via user-context client (RLS UPDATE policy allows own applications)
-    await supabase
+    // Cache result via admin (update is safe — writing back to the app the user owns)
+    await sbAdmin()
       .from("applications")
       .update({ extracted_job_terms: validated })
       .eq("id", application_id);
@@ -523,7 +586,6 @@ ${job_description_raw.slice(0, 6000)}`;
 // ── Generate CV ───────────────────────────────────────────────────────────────
 app.post("/make-server-3bbff5cf/generate-cv", async (c) => {
   const userId = c.get("userId") as string;
-  const supabase = c.get("supabase") as any;
 
   let application_id: string, cv_profile_id: string;
   try { const b = await c.req.json(); application_id = b.application_id; cv_profile_id = b.cv_profile_id; }
@@ -563,18 +625,20 @@ app.post("/make-server-3bbff5cf/generate-cv", async (c) => {
     }, 403);
   }
 
-  // Read via user-context client — RLS enforces ownership
-  const { data: appRow, error: appErr } = await supabase
+  // Ownership checks — verify this user owns both the application and cv_profile
+  const { data: appRow, error: appErr } = await admin
     .from("applications")
     .select("*")
     .eq("id", application_id)
+    .eq("user_id", userId)  // ownership enforced here
     .single();
   if (appErr || !appRow) return c.json({ success: false, error: "Application not found" }, 404);
 
-  const { data: cvProfile, error: cvErr } = await supabase
+  const { data: cvProfile, error: cvErr } = await admin
     .from("cv_profiles")
     .select("*")
     .eq("id", cv_profile_id)
+    .eq("user_id", userId)  // ownership enforced here
     .single();
   if (cvErr || !cvProfile) return c.json({ success: false, error: "CV profile not found" }, 404);
 
@@ -717,7 +781,7 @@ Rewrite this CV to be the strongest possible application for the role above.
 
 SPECIFIC INSTRUCTIONS:
 
-1. SUMMARY — rewrite completely for this specific role. Maximum 4 sentences, no cliches.
+1. SUMMARY — rewrite completely for this specific role. Maximum 4 sentences, no clichés.
 
 2. EXPERIENCE BULLETS — rules per role:
    - MINIMUM 4 bullets per role, NO EXCEPTIONS
@@ -773,7 +837,7 @@ Do not include any explanation, preamble, or markdown. JSON only.`;
       console.log("[generate-cv] bullet validation error (non-fatal):", validationErr);
     }
 
-    // Merge personal_details overrides (use admin — users table entitlement)
+    // Merge personal_details overrides
     try {
       const { data: pdRow } = await admin.from("users").select("personal_details").eq("id", userId).single();
       const pd = pdRow?.personal_details;
@@ -789,8 +853,6 @@ Do not include any explanation, preamble, or markdown. JSON only.`;
       console.log("[generate-cv] personal_details merge error (non-fatal):", pdErr);
     }
 
-    // Insert generated CV via admin (the RLS INSERT policy on generated_cvs requires
-    // the application to be owned; admin bypasses this for reliability)
     const { data: saved, error: saveErr } = await admin.from("generated_cvs")
       .insert({ application_id, cv_json: generatedCv, template_id: "clean" })
       .select("id").single();
@@ -827,6 +889,7 @@ app.put("/make-server-3bbff5cf/generated-cv/:id", async (c) => {
       const kv = await import("./kv_store.tsx");
       const existing = await kv.get(`generated_cv:${id}`);
       if (!existing) return c.json({ success: false, error: "Not found" }, 404);
+      // Verify ownership via application_id in KV record
       if (existing.user_id && existing.user_id !== userId) {
         return c.json({ success: false, error: "not_found" }, 404);
       }
@@ -834,8 +897,11 @@ app.put("/make-server-3bbff5cf/generated-cv/:id", async (c) => {
       return c.json({ success: true, id });
     }
 
-    // Update via user-context client — RLS enforces ownership through applications join
-    const { data, error } = await supabase
+    // Ownership check before update
+    try { await assertOwnGeneratedCv(supabase, userId, id); }
+    catch (r) { return r as Response; }
+
+    const { data, error } = await sbAdmin()
       .from("generated_cvs")
       .update({ cv_json, updated_at: new Date().toISOString() })
       .eq("id", id)
@@ -864,14 +930,17 @@ app.get("/make-server-3bbff5cf/generated-cv/:id", async (c) => {
       if (d.user_id && d.user_id !== userId) return c.json({ success: false, error: "not_found" }, 404);
       let appData = null;
       if (d.application_id) {
-        const { data } = await supabase.from("applications").select("job_title, company, job_description_raw").eq("id", d.application_id).single();
+        const { data } = await sbAdmin().from("applications").select("job_title, company, job_description_raw").eq("id", d.application_id).single();
         appData = data;
       }
       return c.json({ success: true, cv_json: d.cv_json, template: d.template || "clean", application_id: d.application_id, job_title: appData?.job_title || "", company: appData?.company || "", job_description_raw: appData?.job_description_raw || "" });
     }
 
-    // Read via user-context client — RLS enforces ownership through applications join
-    const { data: g, error } = await supabase
+    // Ownership check
+    try { await assertOwnGeneratedCv(supabase, userId, id); }
+    catch (r) { return r as Response; }
+
+    const { data: g, error } = await sbAdmin()
       .from("generated_cvs")
       .select("cv_json, template_id, application_id")
       .eq("id", id)
@@ -881,7 +950,7 @@ app.get("/make-server-3bbff5cf/generated-cv/:id", async (c) => {
 
     let appData = null;
     if (g.application_id) {
-      const { data } = await supabase.from("applications").select("job_title, company, job_description_raw").eq("id", g.application_id).single();
+      const { data } = await sbAdmin().from("applications").select("job_title, company, job_description_raw").eq("id", g.application_id).single();
       appData = data;
     }
 
@@ -905,17 +974,22 @@ app.post("/make-server-3bbff5cf/generate-cover-letter", async (c) => {
   catch { return c.json({ success: false, error: "Invalid request body" }, 400); }
   if (!application_id || !generated_cv_id) return c.json({ success: false, error: "application_id and generated_cv_id required" }, 400);
 
+  // Ownership checks
+  try { await assertOwnApplication(supabase, userId, application_id); }
+  catch (r) { return r as Response; }
+  try { await assertOwnGeneratedCv(supabase, userId, generated_cv_id); }
+  catch (r) { return r as Response; }
+
   let key: string;
   try { key = openaiKey(); } catch { return c.json({ success: false, error: "OpenAI key not configured" }, 500); }
 
   const admin = sbAdmin();
 
   try {
-    // Read via user-context client — RLS enforces ownership
-    const { data: application, error: appErr } = await supabase.from("applications").select("job_title, company, job_parsed_json, job_description_raw").eq("id", application_id).single();
+    const { data: application, error: appErr } = await admin.from("applications").select("job_title, company, job_parsed_json, job_description_raw").eq("id", application_id).single();
     if (appErr || !application) return c.json({ success: false, error: "application_not_found" }, 404);
 
-    const { data: genCv, error: cvErr } = await supabase.from("generated_cvs").select("cv_json").eq("id", generated_cv_id).single();
+    const { data: genCv, error: cvErr } = await admin.from("generated_cvs").select("cv_json").eq("id", generated_cv_id).single();
     if (cvErr || !genCv) return c.json({ success: false, error: "generated_cv_not_found" }, 404);
     const cvJson = genCv.cv_json as Record<string, unknown>;
 
@@ -961,15 +1035,13 @@ Return only letter body text (4 paragraphs, no headers/signature).`;
     const content = (await r.json()).choices?.[0]?.message?.content ?? "";
     if (content.length < 100) return c.json({ success: false, error: "Generated content too short." }, 500);
 
-    // Check for existing cover letter via user-context (RLS enforces ownership)
-    const { data: existing } = await supabase.from("cover_letters").select("id").eq("application_id", application_id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const { data: existing } = await admin.from("cover_letters").select("id").eq("application_id", application_id).order("created_at", { ascending: false }).limit(1).maybeSingle();
     let clId: string;
     if (existing?.id) {
-      const { data: u, error: ue } = await supabase.from("cover_letters").update({ content, tone, updated_at: new Date().toISOString() }).eq("id", existing.id).select("id").single();
+      const { data: u, error: ue } = await admin.from("cover_letters").update({ content, tone, updated_at: new Date().toISOString() }).eq("id", existing.id).select("id").single();
       if (ue) return c.json({ success: true, cover_letter_id: existing.id, content, tone });
       clId = u.id;
     } else {
-      // Insert via admin (cover_letters RLS INSERT requires application ownership join)
       const { data: ins, error: ie } = await admin.from("cover_letters").insert({ application_id, content, tone }).select("id").single();
       if (ie) return c.json({ success: false, error: "Failed to save: " + ie.message }, 500);
       clId = ins.id;
@@ -996,22 +1068,24 @@ app.get("/make-server-3bbff5cf/application-data/:id", async (c) => {
   try {
     const id = c.req.param("id");
 
-    // All reads via user-context client — RLS enforces ownership
-    const { data: application, error: appErr } = await supabase.from("applications").select("*").eq("id", id).single();
-    if (appErr || !application) {
-      console.log("[application-data] not found or RLS denied, id:", id, "error:", appErr?.message);
-      return c.json({ success: false, error: "Application not found" }, 404);
-    }
+    // Ownership check — will 404 if not owned
+    try { await assertOwnApplication(supabase, userId, id); }
+    catch (r) { return r as Response; }
 
-    const { data: cvData } = await supabase.from("generated_cvs")
+    const admin = sbAdmin();
+
+    const { data: application, error: appErr } = await admin.from("applications").select("*").eq("id", id).single();
+    if (appErr || !application) return c.json({ success: false, error: "Application not found" }, 404);
+
+    const { data: cvData } = await admin.from("generated_cvs")
       .select("id, cv_json, match_score, feedback_json, feedback_generated_at, template_id, pdf_url, created_at, updated_at")
       .eq("application_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle();
 
-    const { data: clData } = await supabase.from("cover_letters")
+    const { data: clData } = await admin.from("cover_letters")
       .select("id, content, tone, pdf_url, updated_at, created_at")
       .eq("application_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle();
 
-    const { data: notesData } = await supabase.from("interview_notes")
+    const { data: notesData } = await admin.from("interview_notes")
       .select("*").eq("application_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle();
 
     return c.json({ success: true, application, generated_cv: cvData ?? null, cover_letter: clData ?? null, notes: notesData ?? null });
@@ -1027,8 +1101,12 @@ app.post("/make-server-3bbff5cf/save-notes", async (c) => {
     const { application_id, notes_text, interview_date, interview_type, outcome } = await c.req.json();
     if (!application_id) return c.json({ success: false, error: "application_id required" }, 400);
 
-    // RLS enforces ownership on interview_notes (via applications join)
-    const { data: existing } = await supabase.from("interview_notes").select("id").eq("application_id", application_id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    // Ownership check
+    try { await assertOwnApplication(supabase, userId, application_id); }
+    catch (r) { return r as Response; }
+
+    const admin = sbAdmin();
+    const { data: existing } = await admin.from("interview_notes").select("id").eq("application_id", application_id).order("created_at", { ascending: false }).limit(1).maybeSingle();
     const payload = {
       notes_text: notes_text || null,
       interview_date: interview_date ? new Date(interview_date).toISOString() : null,
@@ -1037,11 +1115,10 @@ app.post("/make-server-3bbff5cf/save-notes", async (c) => {
     };
 
     if (existing?.id) {
-      const { error } = await supabase.from("interview_notes").update(payload).eq("id", existing.id);
+      const { error } = await admin.from("interview_notes").update(payload).eq("id", existing.id);
       if (error) return c.json({ success: false, error: "Failed: " + error.message }, 500);
     } else {
-      // Insert via admin (interview_notes RLS INSERT requires applications join)
-      const { error } = await sbAdmin().from("interview_notes").insert({ application_id, ...payload });
+      const { error } = await admin.from("interview_notes").insert({ application_id, ...payload });
       if (error) return c.json({ success: false, error: "Failed: " + error.message }, 500);
     }
     return c.json({ success: true });
@@ -1058,17 +1135,21 @@ app.post("/make-server-3bbff5cf/save-cover-letter", async (c) => {
     if (!application_id || !content) return c.json({ success: false, error: "application_id and content required" }, 400);
     if (!cover_letter_id) return c.json({ success: false, error: "cover_letter_id required" }, 400);
 
-    // RLS enforces ownership — user can only see/update own cover letters
-    const { data: cl } = await supabase
+    // Ownership check — verify the application is owned by this user
+    try { await assertOwnApplication(supabase, userId, application_id); }
+    catch (r) { return r as Response; }
+
+    // Then verify the cover letter belongs to that application
+    const { data: cl } = await sbAdmin()
       .from("cover_letters")
       .select("id")
       .eq("id", cover_letter_id)
-      .eq("application_id", application_id)
+      .eq("application_id", application_id) // ties cover letter to the verified application
       .maybeSingle();
 
     if (!cl) return c.json({ success: false, error: "not_found" }, 404);
 
-    const { error } = await supabase.from("cover_letters").update({ content, updated_at: new Date().toISOString() }).eq("id", cover_letter_id);
+    const { error } = await sbAdmin().from("cover_letters").update({ content, updated_at: new Date().toISOString() }).eq("id", cover_letter_id);
     if (error) return c.json({ success: false, error: "Failed: " + error.message }, 500);
     return c.json({ success: true });
   } catch (e) { console.log("save-cl exception:", e); return c.json({ success: false, error: "Failed to save" }, 500); }
@@ -1084,15 +1165,21 @@ app.post("/make-server-3bbff5cf/analyse-application", async (c) => {
   catch { return c.json({ success: false, error: "Invalid request body" }, 400); }
   if (!application_id || !generated_cv_id) return c.json({ success: false, error: "application_id and generated_cv_id required" }, 400);
 
+  // Ownership checks
+  try { await assertOwnApplication(supabase, userId, application_id); }
+  catch (r) { return r as Response; }
+  try { await assertOwnGeneratedCv(supabase, userId, generated_cv_id); }
+  catch (r) { return r as Response; }
+
   let key: string;
   try { key = openaiKey(); } catch { return c.json({ success: false, error: "OpenAI key not configured" }, 500); }
 
+  const admin = sbAdmin();
   try {
-    // Read via user-context client — RLS enforces ownership
-    const { data: application, error: appErr } = await supabase.from("applications").select("job_title, company, job_parsed_json, job_description_raw").eq("id", application_id).single();
+    const { data: application, error: appErr } = await admin.from("applications").select("job_title, company, job_parsed_json, job_description_raw").eq("id", application_id).single();
     if (appErr || !application) return c.json({ success: false, error: "Application not found" }, 404);
 
-    const { data: genCv, error: cvErr } = await supabase.from("generated_cvs").select("cv_json").eq("id", generated_cv_id).single();
+    const { data: genCv, error: cvErr } = await admin.from("generated_cvs").select("cv_json").eq("id", generated_cv_id).single();
     if (cvErr || !genCv) return c.json({ success: false, error: "Generated CV not found" }, 404);
 
     const cvJson = genCv.cv_json as Record<string, unknown>;
@@ -1123,8 +1210,7 @@ ${JSON.stringify(cvJson, null, 2)}`;
     const feedback = await chatJSON(key, sysPrompt, userPrompt, 0.3);
     if (!feedback) return c.json({ success: false, error: "AI analysis failed." }, 500);
 
-    // Write feedback via user-context (RLS UPDATE policy allows own generated_cvs)
-    const { error: ue } = await supabase.from("generated_cvs").update({
+    const { error: ue } = await admin.from("generated_cvs").update({
       feedback_json: feedback, feedback_generated_at: new Date().toISOString(),
       match_score: feedback.overall_score, updated_at: new Date().toISOString(),
     }).eq("id", generated_cv_id);
@@ -1349,16 +1435,22 @@ app.post("/make-server-3bbff5cf/generate-interview-prep", async (c) => {
 
   if (!applicationId) return c.json({ error: "application_id required" }, 400);
 
+  // Ownership check
+  try { await assertOwnApplication(supabase, userId, applicationId); }
+  catch (r) { return r as Response; }
+
   // Plan check via admin (entitlement)
   const { data: userData } = await sbAdmin().from("users").select("plan_tier").eq("id", userId).single();
   const isPro = userData?.plan_tier === "pro";
   const questionCount = isPro ? 12 : 5;
 
-  // Read via user-context — RLS enforces ownership
-  const { data: existing } = await supabase
+  const admin = sbAdmin();
+
+  const { data: existing } = await admin
     .from("interview_prep")
     .select("*")
     .eq("application_id", applicationId)
+    .eq("user_id", userId)
     .single();
 
   if (existing?.questions?.length > 0 && !forceRegenerate) {
@@ -1368,11 +1460,11 @@ app.post("/make-server-3bbff5cf/generate-interview-prep", async (c) => {
 
   if (loadOnly) return c.json({ success: true, questions: [], cached: false, isPro });
 
-  // Read application + generated CV via user-context (RLS enforces ownership)
-  const { data: appRow } = await supabase
+  const { data: appRow } = await admin
     .from("applications")
     .select(`job_title, company, job_description_raw, generated_cvs (cv_json)`)
     .eq("id", applicationId)
+    .eq("user_id", userId)
     .single();
 
   if (!appRow) return c.json({ error: "Application not found" }, 404);
@@ -1433,10 +1525,9 @@ Return this exact JSON schema:
 
     const now = new Date().toISOString();
     if (existing) {
-      await supabase.from("interview_prep").update({ questions, generated_at: now, updated_at: now }).eq("application_id", applicationId);
+      await admin.from("interview_prep").update({ questions, generated_at: now, updated_at: now }).eq("application_id", applicationId).eq("user_id", userId);
     } else {
-      // Insert via admin (interview_prep RLS INSERT requires user_id match)
-      await sbAdmin().from("interview_prep").insert({ application_id: applicationId, user_id: userId, questions, generated_at: now, updated_at: now });
+      await admin.from("interview_prep").insert({ application_id: applicationId, user_id: userId, questions, generated_at: now, updated_at: now });
     }
 
     return c.json({ success: true, questions: isPro ? questions : questions.slice(0, 5), isPro, cached: false });
@@ -1461,15 +1552,19 @@ app.post("/make-server-3bbff5cf/save-interview-answer", async (c) => {
     return c.json({ error: "Invalid request body" }, 400);
   }
 
-  // Read and update via user-context — RLS enforces ownership
-  const { data: prep } = await supabase.from("interview_prep").select("questions").eq("application_id", applicationId).single();
+  // Ownership check
+  try { await assertOwnApplication(supabase, userId, applicationId); }
+  catch (r) { return r as Response; }
+
+  const admin = sbAdmin();
+  const { data: prep } = await admin.from("interview_prep").select("questions").eq("application_id", applicationId).eq("user_id", userId).single();
   if (!prep) return c.json({ error: "Interview prep not found" }, 404);
 
   const updatedQuestions = (prep.questions as any[]).map((q: any) =>
     q.id === questionId ? { ...q, user_answer: userAnswer } : q
   );
 
-  await supabase.from("interview_prep").update({ questions: updatedQuestions, updated_at: new Date().toISOString() }).eq("application_id", applicationId);
+  await admin.from("interview_prep").update({ questions: updatedQuestions, updated_at: new Date().toISOString() }).eq("application_id", applicationId).eq("user_id", userId);
 
   return c.json({ success: true });
 });
@@ -1521,11 +1616,18 @@ app.post('/make-server-3bbff5cf/patch-cv-gap', async (c) => {
     return c.json({ error: 'Invalid request body' }, 400);
   }
 
-  // Read via user-context — RLS enforces ownership
-  const { data: genCv } = await supabase.from('generated_cvs').select('cv_json').eq('id', generatedCvId).single();
+  // Ownership checks
+  try { await assertOwnApplication(supabase, userId, applicationId); }
+  catch (r) { return r as Response; }
+  try { await assertOwnGeneratedCv(supabase, userId, generatedCvId); }
+  catch (r) { return r as Response; }
+
+  const admin = sbAdmin();
+
+  const { data: genCv } = await admin.from('generated_cvs').select('cv_json').eq('id', generatedCvId).single();
   if (!genCv) return c.json({ error: 'Generated CV not found' }, 404);
 
-  const { data: appRow } = await supabase.from('applications').select('job_title, company').eq('id', applicationId).single();
+  const { data: appRow } = await admin.from('applications').select('job_title, company').eq('id', applicationId).single();
 
   let key: string;
   try { key = openaiKey(); } catch { return c.json({ error: 'OpenAI key not configured' }, 500); }

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 import { useUserPlan } from '../lib/UserPlanContext';
 
 /* ─── Types ──────────────────────────────────────────────────── */
@@ -117,16 +118,11 @@ function QuestionCard({
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { toast.error('Please log in'); setSaveState('idle'); return; }
 
-      const res = await fetch(
-        `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/save-interview-answer`,
+      const res = await apiFetch(
+        '/make-server-3bbff5cf/save-interview-answer',
         {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${ANON_KEY}`,
-            'Content-Type': 'application/json',
-            'apikey': ANON_KEY,
-            'X-User-Token': session.access_token,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             application_id: applicationId,
             question_id: question.id,
@@ -322,16 +318,11 @@ export function InterviewPrepTab({ applicationId, jobTitle, hasGeneratedCv, isDa
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
-      const res = await fetch(
-        `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/generate-interview-prep`,
+      const res = await apiFetch(
+        '/make-server-3bbff5cf/generate-interview-prep',
         {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${ANON_KEY}`,
-            'Content-Type': 'application/json',
-            'apikey': ANON_KEY,
-            'X-User-Token': session.access_token,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ application_id: applicationId, load_only: true }),
         }
       );
@@ -353,16 +344,11 @@ export function InterviewPrepTab({ applicationId, jobTitle, hasGeneratedCv, isDa
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { toast.error('Please log in'); setGenerating(false); return; }
 
-      const res = await fetch(
-        `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/generate-interview-prep`,
+      const res = await apiFetch(
+        '/make-server-3bbff5cf/generate-interview-prep',
         {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${ANON_KEY}`,
-            'Content-Type': 'application/json',
-            'apikey': ANON_KEY,
-            'X-User-Token': session.access_token,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             application_id: applicationId,
             force_regenerate: forceRegenerate,

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { projectId, publicAnonKey } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 import { UpgradeModal } from './UpgradeModal';
 import { SharedNavbar } from './SharedNavbar';
 
@@ -1211,17 +1212,9 @@ export function NewApplicationScreen() {
         console.error('Error updating civil service mode:', updateError);
       }
 
-      // Route through our make-server proxy so the gateway always gets the
-      // anon key (never expires) and the user JWT travels in X-User-Token.
-      const { data: { session: genSession } } = await supabase.auth.getSession();
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/generate-cv`, {
+      const response = await apiFetch('/make-server-3bbff5cf/generate-cv', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'Content-Type': 'application/json',
-          'apikey': publicAnonKey,
-          ...(genSession?.access_token ? { 'X-User-Token': genSession.access_token } : {}),
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           application_id: applicationId,
           cv_profile_id: selectedCvId,
@@ -1365,19 +1358,9 @@ export function NewApplicationScreen() {
       // Update status text: "Uploading…" → "Reading your CV…"
       setUploadCvStatus('reading');
 
-      // Call the dedicated parse-cv Edge Function.
-      // Authorization uses the static anon key so the Supabase gateway never
-      // rejects it with "Invalid JWT" due to an expired user access token.
-      // The user's real JWT travels in X-User-Token so the server can still
-      // extract userId from it.
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/parse-cv`, {
+      const response = await apiFetch('/make-server-3bbff5cf/parse-cv', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'X-User-Token': session.access_token,
-          'Content-Type': 'application/json',
-          'apikey': publicAnonKey,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           file_url: fileUrl,
           label: file.name.replace(/\.[^/.]+$/, ''),

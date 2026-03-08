@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { projectId, publicAnonKey } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 
 /* ─── Types (mirrored from CvEditorScreen) ─────────────────── */
 interface PersonalDetails {
@@ -319,17 +320,11 @@ export function PdfPreviewModal({
           : [],
       };
 
-      const SUPABASE_URL = `https://${projectId}.supabase.co`;
-      const response = await fetch(
-        `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/generate-pdf`,
+      const response = await apiFetch(
+        '/make-server-3bbff5cf/generate-pdf',
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'apikey': publicAnonKey,
-            'X-User-Token': accessToken,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             cv_json: cvPayload,
           }),

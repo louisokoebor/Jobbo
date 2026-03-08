@@ -22,6 +22,7 @@ import { PdfPreviewModal } from './PdfPreviewModal';
 import { SharedNavbar } from './SharedNavbar';
 import { useNavigation } from '../lib/NavigationContext';
 import { useUserPlan } from '../lib/UserPlanContext';
+import { apiFetch } from '../lib/apiFetch';
 
 const SUPABASE_URL = `https://${projectId}.supabase.co`;
 
@@ -364,16 +365,11 @@ function RoleCard({ role, isDark, onChange, onDelete, jobTitle, jobDescription }
     setBulletError(null);
     setSuggestion(null);
     try {
-      const res = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-3bbff5cf/improve-bullet`,
+      const res = await apiFetch(
+        '/make-server-3bbff5cf/improve-bullet',
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'apikey': publicAnonKey,
-            'X-User-Token': (await supabase.auth.getSession()).data.session?.access_token || '',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             bulletText: bullet.text,
             jobTitle: jobTitle || '',
@@ -789,18 +785,11 @@ function GapAnalysisSection({ isDark, skillsGap, applicationId, generatedCvId, o
     const gapType = detectGapType(gap);
 
     try {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token || '';
-      const res = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-3bbff5cf/patch-cv-gap`,
+      const res = await apiFetch(
+        '/make-server-3bbff5cf/patch-cv-gap',
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'apikey': publicAnonKey,
-            'X-User-Token': token,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             application_id: applicationId,
             generated_cv_id: generatedCvId,
@@ -1213,14 +1202,8 @@ export function CvEditorScreen() {
     const loadGeneratedCv = async () => {
       setIsLoadingCv(true);
       try {
-        const res = await fetch(
-          `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/generated-cv/${generatedCvId}`,
-          {
-            headers: {
-              'Authorization': `Bearer ${publicAnonKey}`,
-              'apikey': publicAnonKey,
-            },
-          }
+        const res = await apiFetch(
+          `/make-server-3bbff5cf/generated-cv/${generatedCvId}`,
         );
         const data = await res.json();
         if (cancelled) return;
@@ -1298,9 +1281,8 @@ export function CvEditorScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(
-          `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/application-data/${applicationId}`,
-          { headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'apikey': publicAnonKey } },
+        const res = await apiFetch(
+          `/make-server-3bbff5cf/application-data/${applicationId}`,
         );
         const data = await res.json();
         if (!cancelled && data.success && data.application?.job_description_raw) {
@@ -1487,18 +1469,11 @@ export function CvEditorScreen() {
 
     if (generatedCvId) {
       try {
-        const session = await supabase.auth.getSession();
-        const token = session.data.session?.access_token || '';
-        const res = await fetch(
-          `${SUPABASE_URL}/functions/v1/make-server-3bbff5cf/generated-cv/${generatedCvId}`,
+        const res = await apiFetch(
+          `/make-server-3bbff5cf/generated-cv/${generatedCvId}`,
           {
             method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${publicAnonKey}`,
-              'apikey': publicAnonKey,
-              'X-User-Token': token,
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               cv_json: cvJsonToSave,
             }),
